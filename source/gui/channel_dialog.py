@@ -1,3 +1,4 @@
+# channel_dialog.py
 import os
 from threading import Thread
 import webbrowser
@@ -6,11 +7,11 @@ import wx
 import application
 from database import Favorite
 from gui.download_progress import DownloadProgress
+from download_handler.downloader import downloadAction
 from media_player.media_gui import MediaGui
 from nvda_client.client import speak
 from settings_handler import config_get
-from utiles import direct_download, get_audio_stream, get_video_stream
-from youtube_browser.ytdlp_collections import ChannelResult, NO_RESULTS_TEXT
+from youtube_browser.ytdlp_collections import ChannelResult
 from .activity_dialog import LoadingDialog
 
 
@@ -226,7 +227,17 @@ class ChannelDialog(wx.Dialog):
         n = self.videosBox.Selection
         title = self.result.get_title(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(option, self.result.get_url(n), dlg, "video", os.path.join(config_get("path"), self.result.title))
+        fmt, conv = self._format_from_option(option)
+        path = os.path.join(config_get("path"), self.result.title)
+        downloadAction(self.result.get_url(n), path, dlg, fmt, convert=conv, channel_or_playlist=False)
+
+    def _format_from_option(self, option):
+        if option == 0:
+            return 'bv+ba/b', False
+        elif option == 1:
+            return 'ba[ext=m4a]', False
+        else:
+            return 'ba', True
 
     def directDownload(self):
         self.downloadSelected(int(config_get("defaultformat")))
@@ -276,7 +287,8 @@ class ChannelDialog(wx.Dialog):
 
     def downloadChannelSelection(self, option):
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), self.result.title)
-        direct_download(option, self.result.channel_url or self.url, dlg, "channel")
+        fmt, conv = self._format_from_option(option)
+        downloadAction(self.result.channel_url or self.url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=True)
 
     def back(self):
         self.Parent.Show()

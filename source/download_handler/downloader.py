@@ -15,6 +15,7 @@ class Downloader:
         self.channel_or_playlist = channel_or_playlist
         self.cancelled = False
         self.is_finished = False
+        self.current_filename = None
 
     @staticmethod
     def get_proper_count(number):
@@ -43,6 +44,10 @@ class Downloader:
     def my_hook(self, data):
         if self.cancelled:
             raise Exception("Download stopped by user")
+        
+        if 'filename' in data:
+            self.current_filename = data['filename']
+            
         if data.get('status') == 'downloading':
             total_bytes = data.get("total_bytes") or data.get("total_bytes_estimate") or 0
             if total_bytes == 0:
@@ -108,7 +113,6 @@ class Downloader:
         with yt_dlp.YoutubeDL(download_options) as ydl:
             ydl.download([self.url])
 
-
 def downloadAction(url, path, dlg, downloading_format, convert=False, channel_or_playlist=False):
     downloader = Downloader(url, path, downloading_format, dlg, convert=convert, channel_or_playlist=channel_or_playlist)
     dlg.downloader = downloader
@@ -121,6 +125,14 @@ def downloadAction(url, path, dlg, downloading_format, convert=False, channel_or
         except Exception as e:
             traceback.print_exc()
             if downloader.cancelled:
+                if downloader.current_filename:
+                    for ext in ['', '.part', '.ytdl']:
+                        f = downloader.current_filename + ext
+                        if os.path.exists(f):
+                            try:
+                                os.remove(f)
+                            except:
+                                pass
                 wx.CallAfter(dlg.Destroy)
                 return False
             if at < 3:

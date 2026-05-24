@@ -15,35 +15,24 @@ class DownloadProgress(wx.Frame):
         font.MakeBold()
         self.lbl_status.SetFont(font)
         
-        grid_sizer = wx.FlexGridSizer(4, 2, 10, 15)
-        self.lbl_percent = wx.StaticText(panel, label="0%")
-        self.lbl_size = wx.StaticText(panel, label="--")
-        self.lbl_downloaded = wx.StaticText(panel, label="--")
-        self.lbl_remaining = wx.StaticText(panel, label="--")
-        self.lbl_speed = wx.StaticText(panel, label="--")
-        
-        grid_sizer.Add(wx.StaticText(panel, label="Progress:"), 0, wx.ALIGN_RIGHT)
-        grid_sizer.Add(self.lbl_percent, 0, wx.EXPAND)
-        grid_sizer.Add(wx.StaticText(panel, label="Total Size:"), 0, wx.ALIGN_RIGHT)
-        grid_sizer.Add(self.lbl_size, 0, wx.EXPAND)
-        grid_sizer.Add(wx.StaticText(panel, label="Downloaded:"), 0, wx.ALIGN_RIGHT)
-        grid_sizer.Add(self.lbl_downloaded, 0, wx.EXPAND)
-        grid_sizer.Add(wx.StaticText(panel, label="Remaining:"), 0, wx.ALIGN_RIGHT)
-        grid_sizer.Add(self.lbl_remaining, 0, wx.EXPAND)
-        
         self.gaugeProgress = wx.Gauge(panel, range=100, size=(350, 20))
         
-        speed_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        speed_sizer.Add(wx.StaticText(panel, label="Speed: "), 0, wx.ALIGN_CENTER_VERTICAL)
-        speed_sizer.Add(self.lbl_speed, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.list_box = wx.ListBox(panel, size=(350, 110), choices=[
+            "Download progress: 0%",
+            "Total file size: --",
+            "Downloaded file size: --",
+            "Remaining file size: --",
+            "Downloading speed: --"
+        ])
+        self.list_box.SetSelection(0)
+        self.list_box.SetFocus()
         
         self.btnStop = wx.Button(panel, label="Stop Downloading")
         self.btnStop.Bind(wx.EVT_BUTTON, self.onStopClick)
         
         main_sizer.Add(self.lbl_status, 0, wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, 15)
         main_sizer.Add(self.gaugeProgress, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 15)
-        main_sizer.Add(grid_sizer, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.ALIGN_CENTER_HORIZONTAL, 15)
-        main_sizer.Add(speed_sizer, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.BOTTOM, 15)
+        main_sizer.Add(self.list_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 15)
         main_sizer.Add(self.btnStop, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.BOTTOM, 10)
         
         panel.SetSizer(main_sizer)
@@ -53,16 +42,21 @@ class DownloadProgress(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.onClose)
 
     def update_stats(self, percent, total, downloaded, remaining, speed):
-        self.lbl_percent.SetLabel("{}%".format(percent))
-        self.lbl_size.SetLabel(total)
-        self.lbl_downloaded.SetLabel(downloaded)
-        self.lbl_remaining.SetLabel(remaining)
-        self.lbl_speed.SetLabel(speed)
+        if self.list_box.GetCount() == 5:
+            self.list_box.SetString(0, "Download progress: {}%".format(percent))
+            self.list_box.SetString(1, "Total file size: {}".format(total))
+            self.list_box.SetString(2, "Downloaded file size: {}".format(downloaded))
+            self.list_box.SetString(3, "Remaining file size: {}".format(remaining))
+            self.list_box.SetString(4, "Downloading speed: {}".format(speed))
         self.gaugeProgress.SetValue(percent)
         self.Layout()
 
     def update_status(self, msg):
         self.lbl_status.SetLabel(msg)
+        if msg == "Converting your audio...":
+            self.list_box.Clear()
+            self.list_box.Append("Converting into mp3...")
+            self.list_box.SetSelection(0)
         self.Layout()
 
     def onStopClick(self, event):
@@ -73,7 +67,8 @@ class DownloadProgress(wx.Frame):
             message = wx.MessageBox("A download is in progress. Do you want to cancel it?", "Exit", style=wx.YES_NO | wx.ICON_QUESTION, parent=self)
             if message == wx.YES:
                 self.downloader.cancelled = True
-                self.Destroy()
+                self.btnStop.Disable()
+                self.btnStop.SetLabel("Stopping...")
             else:
                 if event.CanVeto():
                     event.Veto()

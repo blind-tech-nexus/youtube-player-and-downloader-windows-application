@@ -1,6 +1,7 @@
+# playlist_dialog.py
 import wx
 from youtube_browser.ytdlp_collections import PlaylistResult
-from utiles import direct_download, get_audio_stream, get_video_stream
+from download_handler.downloader import downloadAction
 from media_player.media_gui import MediaGui
 from nvda_client.client import speak
 import pyperclip
@@ -162,9 +163,10 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         title = self.result.videos[n]["channel"]['name']
         url = self.result.videos[n]["channel"]['url']
-        download_type = "channel"
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(int(config_get('defaultformat')), url, dlg, download_type)
+        option = int(config_get('defaultformat'))
+        fmt, conv = self._format_from_option(option)
+        downloadAction(url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=True)
 
     def playVideo(self):
         if not self.valid_selection():
@@ -212,7 +214,8 @@ class PlaylistDialog(wx.Dialog):
         url = self.result.get_url(n)
         title = self.result.get_title(n)
         dlg = DownloadProgress(self.Parent, title)
-        direct_download(0, url, dlg, "video", os.path.join(config_get("path"), self.title))
+        path = os.path.join(config_get("path"), self.title)
+        downloadAction(url, path, dlg, 'bv+ba/b', convert=False, channel_or_playlist=False)
 
     def directDownload(self):
         if not self.valid_selection():
@@ -221,7 +224,18 @@ class PlaylistDialog(wx.Dialog):
         url = self.result.get_url(n)
         title = self.result.get_title(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(int(config_get('defaultformat')), url, dlg, "video", os.path.join(config_get("path"), self.title))
+        option = int(config_get('defaultformat'))
+        fmt, conv = self._format_from_option(option)
+        path = os.path.join(config_get("path"), self.title)
+        downloadAction(url, path, dlg, fmt, convert=conv, channel_or_playlist=False)
+
+    def _format_from_option(self, option):
+        if option == 0:
+            return 'bv+ba/b', False
+        elif option == 1:
+            return 'ba[ext=m4a]', False
+        else:
+            return 'ba', True
 
     def onM4aDownload(self, event):
         if not self.valid_selection():
@@ -230,7 +244,8 @@ class PlaylistDialog(wx.Dialog):
         url = self.result.get_url(n)
         title = self.result.get_title(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(1, url, dlg, "video", os.path.join(config_get("path"), self.title))
+        path = os.path.join(config_get("path"), self.title)
+        downloadAction(url, path, dlg, 'ba[ext=m4a]', convert=False, channel_or_playlist=False)
 
     def onMp3Download(self, event):
         if not self.valid_selection():
@@ -239,7 +254,8 @@ class PlaylistDialog(wx.Dialog):
         url = self.result.get_url(n)
         title = self.result.get_title(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(2, url, dlg, "video", os.path.join(config_get("path"), self.title))
+        path = os.path.join(config_get("path"), self.title)
+        downloadAction(url, path, dlg, 'ba', convert=True, channel_or_playlist=False)
 
     def onDownload(self, event):
         self.show_video_download_menu()
@@ -284,7 +300,8 @@ class PlaylistDialog(wx.Dialog):
 
     def downloadPlaylistSelection(self, option):
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), self.title)
-        direct_download(option, self.url, dlg, "playlist")
+        fmt, conv = self._format_from_option(option)
+        downloadAction(self.url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=True)
 
     def onFavoritePlaylist(self, event):
         data = {

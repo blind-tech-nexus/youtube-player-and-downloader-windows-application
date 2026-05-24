@@ -1,3 +1,4 @@
+# browser.py
 import webbrowser
 from threading import Thread
 import pyperclip
@@ -8,19 +9,17 @@ from gui.settings_dialog import SettingsDialog
 from gui.playlist_dialog import PlaylistDialog
 from gui.channel_dialog import ChannelDialog
 from gui.activity_dialog import LoadingDialog
-
 from download_handler.downloader import downloadAction
 from media_player.media_gui import MediaGui
 from media_player.player import Player
 from nvda_client.client import speak
 from settings_handler import config_get
 from youtube_browser.search_handler import Search
-from utiles import direct_download, get_audio_stream, get_video_stream
+from utiles import get_audio_stream, get_video_stream
 from database import Favorite, Continue
 
 
 class YoutubeBrowser(wx.Frame):
-    # Normalized strings to 'shorts' across the entire class
     def is_playable_result(self, result_type):
         return result_type in ("video", "shorts", "movie")
 
@@ -69,7 +68,7 @@ class YoutubeBrowser(wx.Frame):
         self._suppress_autoplay = False
         self._loading_more = False
         self._mouse_selecting = False
-        self._current_fav_url = None # Used to track current active selection and prevent thread race conditions
+        self._current_fav_url = None
         
         self.contextSetup()
         results_shortcuts = wx.AcceleratorTable([
@@ -320,7 +319,16 @@ class YoutubeBrowser(wx.Frame):
 
     def download_channel_url(self, url, title, option):
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(option, url, dlg, "channel")
+        fmt, conv = self._format_from_option(option)
+        downloadAction(url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=True)
+
+    def _format_from_option(self, option):
+        if option == 0:
+            return 'bv+ba/b', False
+        elif option == 1:
+            return 'ba[ext=m4a]', False
+        else:
+            return 'ba', True
 
     def onOpenInBrowser(self, event):
         number = self.searchResults.Selection
@@ -332,32 +340,46 @@ class YoutubeBrowser(wx.Frame):
     def onDownload(self, event):
         self.show_download_menu()
 
-    def onM4aDownload(self, event):
-        if self.searchResults.Selection == -1 or not hasattr(self, "search"):
+    def _download_video(self, result_type):
+        n = self.searchResults.Selection
+        if n == -1:
             return
-        url = self.search.get_url(self.searchResults.Selection)
-        title = self.search.get_title(self.searchResults.Selection)
-        download_type = self.search.get_type(self.searchResults.Selection)
+        url = self.search.get_url(n)
+        title = self.search.get_title(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(1, url, dlg, download_type)
+        is_channel_or_playlist = result_type in ("channel", "playlist")
+        fmt, conv = self._format_from_option(int(config_get('defaultformat')))
+        downloadAction(url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=is_channel_or_playlist)
+
+    def onM4aDownload(self, event):
+        n = self.searchResults.Selection
+        if n == -1:
+            return
+        url = self.search.get_url(n)
+        title = self.search.get_title(n)
+        result_type = self.search.get_type(n)
+        dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
+        downloadAction(url, config_get('path'), dlg, 'ba[ext=m4a]', convert=False, channel_or_playlist=(result_type in ("channel", "playlist")))
 
     def onMp3Download(self, event):
-        if self.searchResults.Selection == -1 or not hasattr(self, "search"):
+        n = self.searchResults.Selection
+        if n == -1:
             return
-        url = self.search.get_url(self.searchResults.Selection)
-        title = self.search.get_title(self.searchResults.Selection)
-        download_type = self.search.get_type(self.searchResults.Selection)
+        url = self.search.get_url(n)
+        title = self.search.get_title(n)
+        result_type = self.search.get_type(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(2, url, dlg, download_type)
+        downloadAction(url, config_get('path'), dlg, 'ba', convert=True, channel_or_playlist=(result_type in ("channel", "playlist")))
 
     def onVideoDownload(self, event):
-        if self.searchResults.Selection == -1 or not hasattr(self, "search"):
+        n = self.searchResults.Selection
+        if n == -1:
             return
-        url = self.search.get_url(self.searchResults.Selection)
-        title = self.search.get_title(self.searchResults.Selection)
-        download_type = self.search.get_type(self.searchResults.Selection)
+        url = self.search.get_url(n)
+        title = self.search.get_title(n)
+        result_type = self.search.get_type(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(0, url, dlg, download_type)
+        downloadAction(url, config_get('path'), dlg, 'bv+ba/b', convert=False, channel_or_playlist=(result_type in ("channel", "playlist")))
 
     def onChannelVideoDownload(self, event):
         n = self.searchResults.Selection
@@ -521,7 +543,6 @@ class YoutubeBrowser(wx.Frame):
         url = self.search.get_url(n)
         if self.favCheck.Value:
             title = self.search.get_title(n)
-            # Safe attribute checking order for channels vs playlists/videos
             if result_type == "channel":
                 channel_name = title
                 channel_url = url
@@ -566,11 +587,10 @@ class YoutubeBrowser(wx.Frame):
             return
         
         url = self.search.get_url(n)
-        self._current_fav_url = url  # Tag current active target
+        self._current_fav_url = url
         
         def check_url(target_url):
             exists = self.favorites.exists(target_url)
-            # Only update UI if the user hasn't scrolled to a different item
             if self._current_fav_url == target_url:
                 wx.CallAfter(self.favCheck.SetValue, exists)
                 
@@ -586,7 +606,10 @@ class YoutubeBrowser(wx.Frame):
         url = self.search.get_url(n)
         title = self.search.get_title(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        direct_download(int(config_get('defaultformat')), url, dlg, result_type)
+        option = int(config_get('defaultformat'))
+        fmt, conv = self._format_from_option(option)
+        is_channel_or_playlist = result_type in ("channel", "playlist")
+        downloadAction(url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=is_channel_or_playlist)
 
     def onShow(self, event):
         self.searchResults.SetFocus()
