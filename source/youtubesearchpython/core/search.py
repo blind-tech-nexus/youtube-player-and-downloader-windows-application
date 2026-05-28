@@ -1,6 +1,7 @@
 import copy
 from typing import Union
 from urllib.parse import urlencode
+from concurrent.futures import ThreadPoolExecutor
 
 from youtubesearchpython.core.requests import RequestCore
 from youtubesearchpython.handlers.componenthandler import ComponentHandler
@@ -11,10 +12,6 @@ import json
 
 
 class SearchCore(RequestCore, RequestHandler, ComponentHandler):
-    response = None
-    responseSource = None
-    resultComponents = []
-
     def __init__(self, query: str, limit: int, language: str, region: str, searchPreferences: str, timeout: int):
         super().__init__()
         self.query = query
@@ -23,9 +20,15 @@ class SearchCore(RequestCore, RequestHandler, ComponentHandler):
         self.region = region
         self.searchPreferences = searchPreferences
         self.timeout = timeout
+        self.response = None
+        self.responseSource = None
+        self.resultComponents = []
         self.continuationKey = None
         self._channel_cache = {}
         self._playlist_cache = {}
+        self._short_cache = {}
+        self.forceShorts = False
+        self.max_workers = 1
 
     def sync_create(self):
         self._makeRequest()
@@ -129,6 +132,22 @@ class SearchCore(RequestCore, RequestHandler, ComponentHandler):
             self.url = previous_url
             self.data = previous_data
 
+    def _sync_player(self, video_id: str) -> dict:
+        previous_url = self.url
+        previous_data = self.data
+        try:
+            self.url = 'https://www.youtube.com/youtubei/v1/player' + '?' + urlencode({
+                'key': searchKey,
+            })
+            request_body = copy.deepcopy(requestPayload)
+            request_body['videoId'] = video_id
+            self.data = request_body
+            response = self.syncPostRequest()
+            return json.loads(response.text)
+        finally:
+            self.url = previous_url
+            self.data = previous_data
+
     def _extract_video_count_from_channel_browse(self, response: dict) -> str:
         legacy_header_count = self._getText(self._getValue(response, ['header', 'c4TabbedHeaderRenderer', 'videosCountText']))
         if legacy_header_count and 'video' in legacy_header_count.lower():
@@ -203,21 +222,104 @@ class SearchCore(RequestCore, RequestHandler, ComponentHandler):
         component['channel'] = cached.get('channel') or component.get('channel') or {}
         return self._finalizeComponent(component)
 
+    def _enrich_short_component(self, component: dict) -> dict:
+        video_id = component.get('id')
+        if not video_id or video_id == 'No id':
+            return component
+
+        cached = self._short_cache.get(video_id)
+        if cached is None:
+            try:
+                response = self._sync_player(video_id)
+                video_details = self._getValue(response, ['videoDetails']) or {}
+                microformat = self._getValue(response, ['microformat', 'playerMicroformatRenderer']) or {}
+                channel_id = video_details.get('channelId')
+                channel_link = self._normalizeUrl(self._getValue(microformat, ['ownerProfileUrl'])) or ('https://www.youtube.com/channel/' + channel_id if channel_id else None)
+                channel_thumbnails = []
+                if channel_id:
+                    try:
+                        channel_response = self._sync_browse(channel_id)
+                        channel_link = (
+                            self._normalizeUrl(self._getValue(channel_response, ['metadata', 'channelMetadataRenderer', 'vanityChannelUrl']))
+                            or self._normalizeUrl(self._getValue(channel_response, ['metadata', 'channelMetadataRenderer', 'channelUrl']))
+                            or channel_link
+                        )
+                        channel_thumbnails = (
+                            self._getThumbnailSources(self._getValue(channel_response, ['header', 'c4TabbedHeaderRenderer', 'avatar']))
+                            or self._getThumbnailSources(self._getValue(channel_response, ['header', 'pageHeaderRenderer', 'content', 'pageHeaderViewModel', 'image', 'decoratedAvatarViewModel', 'avatar', 'avatarViewModel', 'image']))
+                            or []
+                        )
+                    except Exception:
+                        channel_thumbnails = []
+                cached = {
+                    'title': video_details.get('title'),
+                    'duration': self._seconds_to_timestamp(video_details.get('lengthSeconds')),
+                    'accessibilityDuration': self._seconds_to_accessibility_duration(video_details.get('lengthSeconds')),
+                    'viewCount': self._build_view_count(video_details.get('viewCount')),
+                    'descriptionSnippet': self._description_from_text(video_details.get('shortDescription')),
+                    'publishedTime': self._iso_to_relative_time(microformat.get('publishDate') or microformat.get('uploadDate')),
+                    'thumbnails': self._getThumbnailSources(self._getValue(video_details, ['thumbnail'])),
+                    'channel': {
+                        'name': video_details.get('author'),
+                        'id': channel_id,
+                        'link': channel_link,
+                        'thumbnails': channel_thumbnails,
+                    },
+                    'link': 'https://www.youtube.com/shorts/' + video_id,
+                }
+            except Exception:
+                cached = {
+                    'title': component.get('title'),
+                    'duration': component.get('duration'),
+                    'accessibilityDuration': self._getValue(component, ['accessibility', 'duration']),
+                    'viewCount': component.get('viewCount'),
+                    'descriptionSnippet': component.get('descriptionSnippet'),
+                    'publishedTime': component.get('publishedTime'),
+                    'thumbnails': component.get('thumbnails'),
+                    'channel': component.get('channel'),
+                    'link': component.get('link'),
+                }
+            self._short_cache[video_id] = cached
+
+        for field in ('title', 'duration', 'publishedTime', 'link'):
+            if cached.get(field):
+                component[field] = cached[field]
+
+        if cached.get('viewCount'):
+            component['viewCount'] = cached['viewCount']
+        if cached.get('descriptionSnippet'):
+            component['descriptionSnippet'] = cached['descriptionSnippet']
+        if cached.get('thumbnails'):
+            component['thumbnails'] = cached['thumbnails']
+
+        channel = component.get('channel') or {}
+        cached_channel = cached.get('channel') or {}
+        merged_channel = {
+            'name': cached_channel.get('name') if self._isMissingValue(channel.get('name')) else channel.get('name'),
+            'id': cached_channel.get('id') if self._isMissingValue(channel.get('id')) else channel.get('id'),
+            'link': cached_channel.get('link') if self._isMissingValue(channel.get('link')) else channel.get('link'),
+            'thumbnails': cached_channel.get('thumbnails') if self._isMissingValue(channel.get('thumbnails')) else channel.get('thumbnails'),
+        }
+        component['channel'] = merged_channel
+        component.setdefault('accessibility', {})
+        if self._isMissingValue(self._getValue(component, ['accessibility', 'duration'])) and cached.get('accessibilityDuration'):
+            component['accessibility']['duration'] = cached['accessibilityDuration']
+        component['type'] = 'shorts'
+        return self._finalizeComponent(component)
+
     def _getComponents(self, findVideos: bool, findChannels: bool, findPlaylists: bool) -> None:
         self.resultComponents = []
         # Safety: ensure responseSource is iterable
         if not self.responseSource:
             return
 
+        raw_components = []
+
         def add_component(component):
             if component is None:
                 return False
-            if component.get('type') == 'channel':
-                component = self._enrich_channel_component(component)
-            elif component.get('type') == 'playlist':
-                component = self._enrich_playlist_component(component)
-            self.resultComponents.append(component)
-            return len(self.resultComponents) >= self.limit
+            raw_components.append(component)
+            return len(raw_components) >= self.limit
 
         for element in self.responseSource:
             if not isinstance(element, dict):
@@ -261,5 +363,21 @@ class SearchCore(RequestCore, RequestHandler, ComponentHandler):
                     if add_component(short_component):
                         break
 
-            if len(self.resultComponents) >= self.limit:
+            if len(raw_components) >= self.limit:
                 break
+
+        def enrich_component(component):
+            if component.get('type') == 'channel':
+                return self._enrich_channel_component(component)
+            if component.get('type') == 'playlist':
+                return self._enrich_playlist_component(component)
+            if component.get('type') == 'shorts':
+                return self._enrich_short_component(component)
+            return component
+
+        max_workers = max(1, min(getattr(self, 'max_workers', 1), len(raw_components) or 1))
+        if max_workers > 1 and len(raw_components) > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                self.resultComponents = list(executor.map(enrich_component, raw_components))
+        else:
+            self.resultComponents = [enrich_component(component) for component in raw_components]

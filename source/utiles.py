@@ -10,6 +10,11 @@ import os
 import sys
 
 import yt_dlp
+from download_handler.formats import (
+    AUDIO_M4A_FORMAT,
+    PLAYABLE_VIDEO_FORMAT,
+    format_from_option,
+)
 
 resolution = "640x360"
 
@@ -18,7 +23,7 @@ def get_audio_stream(url):
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'format': 'bestaudio',
+        'format': AUDIO_M4A_FORMAT,
         'skip_download': True
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -32,7 +37,7 @@ def get_video_stream(url):
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'format': 'best',
+        'format': PLAYABLE_VIDEO_FORMAT,
         'skip_download': True
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -97,17 +102,24 @@ def youtube_regexp(string):
 
 def direct_download(option, url, dlg, download_type="video", path=config_get("path")):
     os.makedirs(path, exist_ok=True)
-    if option == 0:
-        format_str = "bestvideo+bestaudio/best"
-    else:
-        format_str = "bestaudio[ext=m4a]"
-    convert = True if option == 2 else False
+    format_str, convert = format_from_option(option)
     folder = False if download_type == "video" else True
-    trd = Thread(target=downloadAction, args=[url, path, dlg, format_str, dlg.gaugeProgress, dlg.textProgress, convert, folder], daemon=True)
+    trd = Thread(
+        target=downloadAction,
+        kwargs={
+            "url": url,
+            "path": path,
+            "dlg": dlg,
+            "downloading_format": format_str,
+            "convert": convert,
+            "channel_or_playlist": folder,
+        },
+        daemon=True,
+    )
     trd.start()
 
 def check_for_updates(quiet=False):
-    url = "https://raw.githubusercontent.com/rai369770-ship-it/youtube-player-and-downloader-windows-application/main/update_info.json"
+    url = "https://raw.githubusercontent.com/blind-tech-nexus/youtube-player-and-downloader-windows-application/master/update_info.json"
     try:
         r = requests.get(url)
         if r.status_code != 200:

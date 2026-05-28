@@ -8,9 +8,11 @@ import application
 from database import Favorite
 from gui.download_progress import DownloadProgress
 from download_handler.downloader import downloadAction
+from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT, format_from_option
 from media_player.media_gui import MediaGui
 from nvda_client.client import speak
 from settings_handler import config_get
+from utiles import get_audio_stream, get_video_stream
 from youtube_browser.ytdlp_collections import ChannelResult
 from .activity_dialog import LoadingDialog
 
@@ -38,8 +40,8 @@ class ChannelDialog(wx.Dialog):
         backButton = wx.Button(p, -1, "Back", name="control")
         self.contextSetup()
         hotkeys = wx.AcceleratorTable([
-            (0, wx.WXK_RETURN, self.audioPlayItemId),
-            (wx.ACCEL_CTRL, wx.WXK_RETURN, self.videoPlayItemId),
+            (0, wx.WXK_RETURN, self.videoPlayItemId),
+            (wx.ACCEL_CTRL, wx.WXK_RETURN, self.audioPlayItemId),
             (wx.ACCEL_CTRL, ord("D"), self.directDownloadId),
             (wx.ACCEL_CTRL, ord("L"), self.copyItemId),
         ])
@@ -181,7 +183,7 @@ class ChannelDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
-        stream = LoadingDialog(self, "Loading playback", get_video_stream, url).res
+        stream = LoadingDialog(self, "Playing video...", get_video_stream, url).res
         gui = MediaGui(self, title, stream, url, True, self.result)
         gui.path = os.path.join(gui.path, self.result.title)
         self.Hide()
@@ -192,7 +194,7 @@ class ChannelDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
-        stream = LoadingDialog(self, "Loading playback", get_audio_stream, url).res
+        stream = LoadingDialog(self, "Playing audio...", get_audio_stream, url).res
         gui = MediaGui(self, title, stream, url, audio_mode=True, results=self.result)
         gui.path = os.path.join(gui.path, self.result.title)
         self.Hide()
@@ -232,12 +234,7 @@ class ChannelDialog(wx.Dialog):
         downloadAction(self.result.get_url(n), path, dlg, fmt, convert=conv, channel_or_playlist=False)
 
     def _format_from_option(self, option):
-        if option == 0:
-            return 'bv+ba/b', False
-        elif option == 1:
-            return 'ba[ext=m4a]', False
-        else:
-            return 'ba', True
+        return format_from_option(option)
 
     def directDownload(self):
         self.downloadSelected(int(config_get("defaultformat")))

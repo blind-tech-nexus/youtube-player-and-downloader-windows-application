@@ -4,6 +4,7 @@ import pyperclip
 import wx
 from gui.download_progress import DownloadProgress
 from download_handler.downloader import downloadAction
+from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT
 from nvda_client.client import speak
 from settings_handler import config_get, config_set
 import application
@@ -358,22 +359,22 @@ class MediaGui(wx.Frame):
         )
 
     def onM4aDownload(self, event):
-        self.execute_download('ba[ext=m4a]', convert=False)
+        self.execute_download(AUDIO_M4A_FORMAT, convert=False)
 
     def onMp3Download(self, event):
-        self.execute_download('ba', convert=True)
+        self.execute_download(AUDIO_DOWNLOAD_FORMAT, convert=True)
 
     def onVideoDownload(self, event):
-        self.execute_download('bv+ba/b', convert=False)
+        self.execute_download(VIDEO_DOWNLOAD_FORMAT, convert=False)
 
     def onDirect(self, event):
         def_format = int(config_get('defaultformat'))
         if def_format == 1:
-            self.execute_download('ba[ext=m4a]', convert=False)
+            self.execute_download(AUDIO_M4A_FORMAT, convert=False)
         elif def_format == 2:
-            self.execute_download('ba', convert=True)
+            self.execute_download(AUDIO_DOWNLOAD_FORMAT, convert=True)
         else:
-            self.execute_download('bv+ba/b', convert=False)
+            self.execute_download(VIDEO_DOWNLOAD_FORMAT, convert=False)
 
     def onDescription(self, event):
         if hasattr(self, "description"):

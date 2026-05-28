@@ -1,4 +1,5 @@
 from typing import Iterable, List, Union
+from datetime import datetime, timezone
 
 from youtubesearchpython.core.constants import *
 
@@ -7,6 +8,8 @@ class ComponentHandler:
     def _normalizeUrl(self, url: Union[str, None]) -> Union[str, None]:
         if not isinstance(url, str) or not url:
             return None
+        if url.startswith('http://www.youtube.com/') or url.startswith('http://youtube.com/'):
+            return 'https://' + url[len('http://'):]
         if url.startswith('//'):
             return 'https:' + url
         if url.startswith('/'):
@@ -88,6 +91,121 @@ class ComponentHandler:
             return value
         return fallback
 
+    def _isMissingValue(self, value) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            text = value.strip()
+            return not text or text.lower().startswith('no ')
+        if isinstance(value, list) or isinstance(value, dict):
+            return len(value) == 0
+        return False
+
+    def _isShortsUrl(self, url: Union[str, None]) -> bool:
+        return isinstance(url, str) and '/shorts/' in url
+
+    def _seconds_to_timestamp(self, seconds: Union[str, int, None]) -> Union[str, None]:
+        try:
+            total_seconds = int(seconds)
+        except (TypeError, ValueError):
+            return None
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f'{hours}:{minutes:02d}:{secs:02d}'
+        return f'{minutes}:{secs:02d}'
+
+    def _seconds_to_accessibility_duration(self, seconds: Union[str, int, None]) -> Union[str, None]:
+        try:
+            total_seconds = int(seconds)
+        except (TypeError, ValueError):
+            return None
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        parts = []
+        if hours:
+            parts.append(f'{hours} hour' + ('s' if hours != 1 else ''))
+        if minutes:
+            parts.append(f'{minutes} minute' + ('s' if minutes != 1 else ''))
+        if secs or not parts:
+            parts.append(f'{secs} second' + ('s' if secs != 1 else ''))
+        return ', '.join(parts)
+
+    def _compact_number(self, value: Union[str, int, None]) -> Union[str, None]:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        thresholds = (
+            (1_000_000_000, 'B'),
+            (1_000_000, 'M'),
+            (1_000, 'K'),
+        )
+        for threshold, suffix in thresholds:
+            if number >= threshold:
+                compact = number / threshold
+                if compact >= 10:
+                    return f'{compact:.0f}{suffix} views'
+                return f'{compact:.1f}{suffix} views'
+        return f'{number} views'
+
+    def _build_view_count(self, value: Union[str, int, None]) -> dict:
+        count_text = None
+        count_short = None
+        if isinstance(value, int):
+            count_text = f'{value:,} views'
+            count_short = self._compact_number(value)
+        elif isinstance(value, str) and value.strip():
+            normalized = value.strip()
+            if normalized.isdigit():
+                number = int(normalized)
+                count_text = f'{number:,} views'
+                count_short = self._compact_number(number)
+            else:
+                count_text = normalized if 'view' in normalized.lower() else f'{normalized} views'
+                count_short = count_text
+        return {
+            'text': count_text,
+            'short': count_short or count_text,
+        }
+
+    def _description_from_text(self, value: Union[str, None]) -> Union[list, None]:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return [{'text': text}]
+
+    def _iso_to_relative_time(self, value: Union[str, None]) -> Union[str, None]:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        normalized = value.strip().replace('Z', '+00:00')
+        try:
+            published = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = now - published.astimezone(timezone.utc)
+        seconds = max(int(delta.total_seconds()), 0)
+
+        units = (
+            ('year', 365 * 24 * 60 * 60),
+            ('month', 30 * 24 * 60 * 60),
+            ('week', 7 * 24 * 60 * 60),
+            ('day', 24 * 60 * 60),
+            ('hour', 60 * 60),
+            ('minute', 60),
+        )
+        for label, size in units:
+            if seconds >= size:
+                amount = seconds // size
+                suffix = '' if amount == 1 else 's'
+                return f'{amount} {label}{suffix} ago'
+        return 'just now'
+
     def _withDefaultCounts(self, counts: dict, fallback: str) -> dict:
         text = self._defaultText(counts.get('text'), fallback)
         short = self._defaultText(counts.get('short'), text)
@@ -146,8 +264,10 @@ class ComponentHandler:
         channel_name = self._getText(self._getValue(video, ['ownerText'])) or self._getText(self._getValue(video, ['longBylineText'])) or self._getText(self._getValue(video, ['shortBylineText']))
         channel_id = self._getValue(video, ['ownerText', 'runs', 0, 'navigationEndpoint', 'browseEndpoint', 'browseId']) or self._getValue(video, ['longBylineText', 'runs', 0, 'navigationEndpoint', 'browseEndpoint', 'browseId']) or self._getValue(video, ['shortBylineText', 'runs', 0, 'navigationEndpoint', 'browseEndpoint', 'browseId'])
         channel_navigation = self._getValue(video, ['ownerText', 'runs', 0, 'navigationEndpoint']) or self._getValue(video, ['longBylineText', 'runs', 0, 'navigationEndpoint']) or self._getValue(video, ['shortBylineText', 'runs', 0, 'navigationEndpoint'])
+        link = self._getCanonicalUrl(self._getValue(video, ['navigationEndpoint']))
+        component_type = 'shorts' if getattr(self, 'forceShorts', False) or self._isShortsUrl(link) else 'video'
         component = {
-            'type': 'video',
+            'type': component_type,
             'id': self._getValue(video, ['videoId']),
             'title': title,
             'publishedTime': self._getText(self._getValue(video, ['publishedTimeText'])),
@@ -169,7 +289,12 @@ class ComponentHandler:
                 'duration': self._getValue(video, ['lengthText', 'accessibility', 'accessibilityData', 'label']),
             },
         }
-        component['link'] = self._getCanonicalUrl(self._getValue(video, ['navigationEndpoint'])) or ('https://www.youtube.com/watch?v=' + component['id'] if component['id'] else '')
+        if link:
+            component['link'] = link
+        elif component_type == 'shorts' and component['id']:
+            component['link'] = 'https://www.youtube.com/shorts/' + component['id']
+        else:
+            component['link'] = 'https://www.youtube.com/watch?v=' + component['id'] if component['id'] else ''
         channel_id = component['channel']['id']
         component['channel']['link'] = self._getCanonicalUrl(channel_navigation) or ('https://www.youtube.com/channel/' + channel_id if channel_id else '')
         component['shelfTitle'] = shelfTitle
@@ -275,7 +400,7 @@ class ComponentHandler:
             if isinstance(entity_id, str) and entity_id.startswith('shorts-shelf-item-'):
                 video_id = entity_id.rsplit('-', 1)[-1]
         component = {
-            'type': 'short',
+            'type': 'shorts',
             'id': video_id,
             'title': title,
             'publishedTime': None,

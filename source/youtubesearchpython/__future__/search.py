@@ -341,11 +341,19 @@ class CustomSearch(SearchCore):
         }
     '''
     def __init__(self, query: str, searchPreferences: str, limit: int = 20, language: str = 'en', region: str = 'US', timeout: Optional[int] = None):
-        self.searchMode = (True, True, True)
+        self.searchMode = (True, False, False) if searchPreferences == SearchMode.shorts else (True, True, True)
         super().__init__(query, limit, language, region, searchPreferences, timeout)  # type: ignore
+        self.forceShorts = searchPreferences == SearchMode.shorts
 
     async def next(self) -> Dict[str, Any]:
         return await self._nextAsync()  # type: ignore
+
+
+class ShortsSearch(CustomSearch):
+    def __init__(self, query: str, limit: int = 20, language: str = 'en', region: str = 'US', timeout: Optional[int] = None):
+        self.searchMode = (True, False, False)
+        super().__init__(query, SearchMode.shorts, limit, language, region, timeout)
+        self.forceShorts = True
 
 class ChannelSearch(ChannelSearchCore):
     '''Searches for videos in specific channel in YouTube.

@@ -2,6 +2,7 @@
 import wx
 from youtube_browser.ytdlp_collections import PlaylistResult
 from download_handler.downloader import downloadAction
+from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT, format_from_option
 from media_player.media_gui import MediaGui
 from nvda_client.client import speak
 import pyperclip
@@ -14,6 +15,7 @@ from .activity_dialog import LoadingDialog
 import application
 from database import Favorite
 from gui.channel_dialog import ChannelDialog
+from utiles import get_audio_stream, get_video_stream
 
 class PlaylistDialog(wx.Dialog):
     def __init__(self, parent, url, views="", elements=""):
@@ -38,8 +40,8 @@ class PlaylistDialog(wx.Dialog):
         self.contextSetup()
 
         hotkeys = wx.AcceleratorTable([
-            (0, wx.WXK_RETURN, self.audioPlayItemId),
-            (wx.ACCEL_CTRL, wx.WXK_RETURN, self.videoPlayItemId),
+            (0, wx.WXK_RETURN, self.videoPlayItemId),
+            (wx.ACCEL_CTRL, wx.WXK_RETURN, self.audioPlayItemId),
             (wx.ACCEL_CTRL, ord("D"), self.directDownloadId),
             (wx.ACCEL_CTRL, ord("L"), self.copyItemId),
         ])
@@ -174,7 +176,7 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
-        stream = LoadingDialog(self, "Loading playback", get_video_stream, url).res
+        stream = LoadingDialog(self, "Playing video...", get_video_stream, url).res
         gui = MediaGui(self, title, stream, url, True, self.result)
         gui.path = os.path.join(gui.path, self.title)
         self.Hide()
@@ -185,7 +187,7 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
-        stream = LoadingDialog(self, "Loading playback", get_audio_stream, url).res
+        stream = LoadingDialog(self, "Playing audio...", get_audio_stream, url).res
         gui = MediaGui(self, title, stream, url, audio_mode=True, results=self.result)
         gui.path = os.path.join(gui.path, self.title)
         self.Hide()
@@ -215,7 +217,7 @@ class PlaylistDialog(wx.Dialog):
         title = self.result.get_title(n)
         dlg = DownloadProgress(self.Parent, title)
         path = os.path.join(config_get("path"), self.title)
-        downloadAction(url, path, dlg, 'bv+ba/b', convert=False, channel_or_playlist=False)
+        downloadAction(url, path, dlg, VIDEO_DOWNLOAD_FORMAT, convert=False, channel_or_playlist=False)
 
     def directDownload(self):
         if not self.valid_selection():
@@ -230,12 +232,7 @@ class PlaylistDialog(wx.Dialog):
         downloadAction(url, path, dlg, fmt, convert=conv, channel_or_playlist=False)
 
     def _format_from_option(self, option):
-        if option == 0:
-            return 'bv+ba/b', False
-        elif option == 1:
-            return 'ba[ext=m4a]', False
-        else:
-            return 'ba', True
+        return format_from_option(option)
 
     def onM4aDownload(self, event):
         if not self.valid_selection():
@@ -245,7 +242,7 @@ class PlaylistDialog(wx.Dialog):
         title = self.result.get_title(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         path = os.path.join(config_get("path"), self.title)
-        downloadAction(url, path, dlg, 'ba[ext=m4a]', convert=False, channel_or_playlist=False)
+        downloadAction(url, path, dlg, AUDIO_M4A_FORMAT, convert=False, channel_or_playlist=False)
 
     def onMp3Download(self, event):
         if not self.valid_selection():
@@ -255,7 +252,7 @@ class PlaylistDialog(wx.Dialog):
         title = self.result.get_title(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         path = os.path.join(config_get("path"), self.title)
-        downloadAction(url, path, dlg, 'ba', convert=True, channel_or_playlist=False)
+        downloadAction(url, path, dlg, AUDIO_DOWNLOAD_FORMAT, convert=True, channel_or_playlist=False)
 
     def onDownload(self, event):
         self.show_video_download_menu()

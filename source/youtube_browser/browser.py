@@ -10,6 +10,7 @@ from gui.playlist_dialog import PlaylistDialog
 from gui.channel_dialog import ChannelDialog
 from gui.activity_dialog import LoadingDialog
 from download_handler.downloader import downloadAction
+from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT, format_from_option
 from media_player.media_gui import MediaGui
 from media_player.player import Player
 from nvda_client.client import speak
@@ -44,7 +45,7 @@ class YoutubeBrowser(wx.Frame):
         self.loadMoreButton = wx.Button(self.panel, -1, "Load more results")
         self.loadMoreButton.Enabled = False
         self.loadMoreButton.Show(not config_get("autoload"))
-        self.playButton = wx.Button(self.panel, -1, "Play audio (enter)", name="controls")
+        self.playButton = wx.Button(self.panel, -1, "Play video (enter)", name="controls")
         self.downloadButton = wx.Button(self.panel, -1, "Download", name="controls")
         self.favCheck = wx.CheckBox(self.panel, -1, "Favorite")
         searchButton = wx.Button(self.panel, -1, "Search... (ctrl+f)")
@@ -323,12 +324,7 @@ class YoutubeBrowser(wx.Frame):
         downloadAction(url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=True)
 
     def _format_from_option(self, option):
-        if option == 0:
-            return 'bv+ba/b', False
-        elif option == 1:
-            return 'ba[ext=m4a]', False
-        else:
-            return 'ba', True
+        return format_from_option(option)
 
     def onOpenInBrowser(self, event):
         number = self.searchResults.Selection
@@ -359,7 +355,7 @@ class YoutubeBrowser(wx.Frame):
         title = self.search.get_title(n)
         result_type = self.search.get_type(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        downloadAction(url, config_get('path'), dlg, 'ba[ext=m4a]', convert=False, channel_or_playlist=(result_type in ("channel", "playlist")))
+        downloadAction(url, config_get('path'), dlg, AUDIO_M4A_FORMAT, convert=False, channel_or_playlist=(result_type in ("channel", "playlist")))
 
     def onMp3Download(self, event):
         n = self.searchResults.Selection
@@ -369,7 +365,7 @@ class YoutubeBrowser(wx.Frame):
         title = self.search.get_title(n)
         result_type = self.search.get_type(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        downloadAction(url, config_get('path'), dlg, 'ba', convert=True, channel_or_playlist=(result_type in ("channel", "playlist")))
+        downloadAction(url, config_get('path'), dlg, AUDIO_DOWNLOAD_FORMAT, convert=True, channel_or_playlist=(result_type in ("channel", "playlist")))
 
     def onVideoDownload(self, event):
         n = self.searchResults.Selection
@@ -379,7 +375,7 @@ class YoutubeBrowser(wx.Frame):
         title = self.search.get_title(n)
         result_type = self.search.get_type(n)
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        downloadAction(url, config_get('path'), dlg, 'bv+ba/b', convert=False, channel_or_playlist=(result_type in ("channel", "playlist")))
+        downloadAction(url, config_get('path'), dlg, VIDEO_DOWNLOAD_FORMAT, convert=False, channel_or_playlist=(result_type in ("channel", "playlist")))
 
     def onChannelVideoDownload(self, event):
         n = self.searchResults.Selection
@@ -504,7 +500,7 @@ class YoutubeBrowser(wx.Frame):
         n = self.searchResults.Selection
         contextMenuIds = (self.videoPlayItemId, self.audioPlayItemId)
         if n == -1 or not self.has_real_results():
-            self.playButton.Label = "Play audio (enter)"
+            self.playButton.Label = "Play video (enter)"
             self.playButton.Enabled = False
             for i in contextMenuIds:
                 self.contextMenu.Enable(i, False)
@@ -523,12 +519,12 @@ class YoutubeBrowser(wx.Frame):
                 self.contextMenu.Enable(i, False)
             return
         if not self.is_playable_result(result_type):
-            self.playButton.Label = "Play audio (enter)"
+            self.playButton.Label = "Play video (enter)"
             self.playButton.Enabled = False
             for i in contextMenuIds:
                 self.contextMenu.Enable(i, False)
             return
-        self.playButton.Label = "Play audio (enter)"
+        self.playButton.Label = "Play video (enter)"
         self.playButton.Enabled = True
         for i in contextMenuIds:
             self.contextMenu.Enable(i, True)
@@ -631,4 +627,4 @@ class YoutubeBrowser(wx.Frame):
             return
         if not self.is_playable_result(result_type):
             return
-        self.playAudio()
+        self.playVideo()

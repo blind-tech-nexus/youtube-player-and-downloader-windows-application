@@ -3,6 +3,7 @@ import wx
 import application
 from database import Favorite
 from download_handler.downloader import downloadAction
+from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT, format_from_option
 from media_player.media_gui import MediaGui
 from nvda_client.client import speak
 import pyperclip
@@ -12,6 +13,7 @@ from settings_handler import config_get
 import webbrowser
 from gui.playlist_dialog import PlaylistDialog
 from gui.channel_dialog import ChannelDialog
+from utiles import get_audio_stream, get_video_stream
 
 
 class Favorites(wx.Frame):
@@ -34,8 +36,8 @@ class Favorites(wx.Frame):
             self.favList.Selection = 0
             self.contextSetup()
             hotkeys = wx.AcceleratorTable([
-                (0, wx.WXK_RETURN, self.audioPlayItemId),
-                (wx.ACCEL_CTRL, wx.WXK_RETURN, self.videoPlayItemId),
+                (0, wx.WXK_RETURN, self.videoPlayItemId),
+                (wx.ACCEL_CTRL, wx.WXK_RETURN, self.audioPlayItemId),
                 (wx.ACCEL_CTRL, ord("D"), self.directDownloadId),
                 (wx.ACCEL_CTRL, ord("L"), self.copyItemId),
             ])
@@ -199,12 +201,7 @@ class Favorites(wx.Frame):
         wx.MessageBox("Link copied successfully", "Done", parent=self)
 
     def _format_from_option(self, option):
-        if option == 0:
-            return 'bv+ba/b', False
-        elif option == 1:
-            return 'ba[ext=m4a]', False
-        else:
-            return 'ba', True
+        return format_from_option(option)
 
     def directDownload(self):
         n = self.favList.Selection
@@ -227,7 +224,7 @@ class Favorites(wx.Frame):
         url = self.rows[n]["url"]
         title = self.rows[n]["title"]
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        downloadAction(url, config_get('path'), dlg, 'ba[ext=m4a]', convert=False, channel_or_playlist=False)
+        downloadAction(url, config_get('path'), dlg, AUDIO_M4A_FORMAT, convert=False, channel_or_playlist=False)
 
     def onMp3Download(self, event):
         n = self.favList.Selection
@@ -237,7 +234,7 @@ class Favorites(wx.Frame):
         url = self.rows[n]["url"]
         title = self.rows[n]["title"]
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        downloadAction(url, config_get('path'), dlg, 'ba', convert=True, channel_or_playlist=False)
+        downloadAction(url, config_get('path'), dlg, AUDIO_DOWNLOAD_FORMAT, convert=True, channel_or_playlist=False)
 
     def onVideoDownload(self, event):
         n = self.favList.Selection
@@ -247,7 +244,7 @@ class Favorites(wx.Frame):
         title = self.rows[n]["title"]
         item_type = self.rows[n].get("item_type", "video")
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
-        downloadAction(url, config_get('path'), dlg, 'bv+ba/b', convert=False, channel_or_playlist=(item_type in ("channel", "playlist")))
+        downloadAction(url, config_get('path'), dlg, VIDEO_DOWNLOAD_FORMAT, convert=False, channel_or_playlist=(item_type in ("channel", "playlist")))
 
     def onDownload(self, event):
         n = self.favList.Selection
