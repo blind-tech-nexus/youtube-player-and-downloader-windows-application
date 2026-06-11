@@ -2,19 +2,13 @@
 import os
 from threading import Thread
 import webbrowser
-import pyperclip
 import wx
 import application
 from database import Favorite
-from gui.download_progress import DownloadProgress
-from download_handler.downloader import downloadAction
-from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT, format_from_option
-from media_player.media_gui import MediaGui
 from nvda_client.client import speak
 from settings_handler import config_get
-from utiles import get_audio_stream, get_video_stream
 from youtube_browser.ytdlp_collections import ChannelResult
-from .activity_dialog import LoadingDialog
+from .activity_dialog import AsyncLoadingDialog, LoadingDialog
 
 
 class ChannelDialog(wx.Dialog):
@@ -135,7 +129,11 @@ class ChannelDialog(wx.Dialog):
         self.Bind(wx.EVT_MENU, self.onOpenInBrowser, webbrowserItem)
 
     def valid_selection(self):
-        return self.result is not None and self.result.has_results() and self.videosBox.Selection != -1
+        return (
+            self.result is not None
+            and self.result.has_results()
+            and self.result.has_index(self.videosBox.Selection)
+        )
 
     def togleControls(self):
         enabled = self.result is not None and self.result.has_results()
@@ -174,6 +172,7 @@ class ChannelDialog(wx.Dialog):
     def onCopy(self, event):
         if not self.valid_selection():
             return
+        import pyperclip
         pyperclip.copy(self.result.get_url(self.videosBox.Selection))
         wx.MessageBox("Video link copied successfully", "Done", parent=self)
 
@@ -183,10 +182,15 @@ class ChannelDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
-        stream = LoadingDialog(self, "Playing video...", get_video_stream, url).res
-        gui = MediaGui(self, title, stream, url, True, self.result)
-        gui.path = os.path.join(gui.path, self.result.title)
-        self.Hide()
+        from utiles import get_video_stream
+
+        def open_player(stream):
+            from media_player.media_gui import MediaGui
+            gui = MediaGui(self, title, stream, url, True, self.result)
+            gui.path = os.path.join(gui.path, self.result.title)
+            self.Hide()
+
+        AsyncLoadingDialog(self, "Playing video...", get_video_stream, open_player, url)
 
     def playAudio(self):
         if not self.valid_selection():
@@ -194,10 +198,15 @@ class ChannelDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
-        stream = LoadingDialog(self, "Playing audio...", get_audio_stream, url).res
-        gui = MediaGui(self, title, stream, url, audio_mode=True, results=self.result)
-        gui.path = os.path.join(gui.path, self.result.title)
-        self.Hide()
+        from utiles import get_audio_stream
+
+        def open_player(stream):
+            from media_player.media_gui import MediaGui
+            gui = MediaGui(self, title, stream, url, audio_mode=True, results=self.result)
+            gui.path = os.path.join(gui.path, self.result.title)
+            self.Hide()
+
+        AsyncLoadingDialog(self, "Playing audio...", get_audio_stream, open_player, url)
 
     def onListBox(self, event):
         if not self.valid_selection():
@@ -206,7 +215,7 @@ class ChannelDialog(wx.Dialog):
             def load():
                 try:
                     if self.result.next():
-                        wx.CallAfter(self.videosBox.Append, self.result.get_new_titles())
+                        wx.CallAfter(self.videosBox.AppendItems, self.result.get_new_titles())
                         speak("More channel videos loaded")
                     else:
                         speak("There are no more videos")
@@ -228,12 +237,16 @@ class ChannelDialog(wx.Dialog):
             return
         n = self.videosBox.Selection
         title = self.result.get_title(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         fmt, conv = self._format_from_option(option)
         path = os.path.join(config_get("path"), self.result.title)
         downloadAction(self.result.get_url(n), path, dlg, fmt, convert=conv, channel_or_playlist=False)
 
     def _format_from_option(self, option):
+        from download_handler.formats import format_from_option
         return format_from_option(option)
 
     def directDownload(self):
@@ -283,6 +296,9 @@ class ChannelDialog(wx.Dialog):
         self.downloadChannelSelection(2)
 
     def downloadChannelSelection(self, option):
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), self.result.title)
         fmt, conv = self._format_from_option(option)
         downloadAction(self.result.channel_url or self.url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=True)
@@ -292,7 +308,7 @@ class ChannelDialog(wx.Dialog):
         self.Destroy()
 
     def onHook(self, event):
-        if event.KeyCode in (wx.WXK_ESCAPE, wx.WXK_BACK) and not type(self.FindFocus()) == MediaGui:
+        if self.IsShown() and event.KeyCode in (wx.WXK_ESCAPE, wx.WXK_BACK):
             self.back()
         else:
             event.Skip()

@@ -1,14 +1,10 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-import yt_dlp
+from paths import resolve_runtime_path
 
 
 NO_RESULTS_TEXT = "No search results found..."
-
-
-def _project_file(name):
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), name)
 
 
 def _ydl_options(flat=True, start=None, end=None):
@@ -19,7 +15,7 @@ def _ydl_options(flat=True, start=None, end=None):
         "extract_flat": "in_playlist" if flat else False,
         "lazy_playlist": True,
         "playlist_items": f"{start or 1}:{end}" if end is not None else None,
-        "js_runtimes": {"deno": {"executable": _project_file("deno.exe")}},
+        "js_runtimes": {"deno": {"executable": resolve_runtime_path("deno.exe")}},
         "extractor_args": {
             "youtubetab": {
                 "approximate_date": ["1"],
@@ -32,6 +28,8 @@ def _ydl_options(flat=True, start=None, end=None):
 
 
 def _extract_info(url, flat=True, start=None, end=None):
+    import yt_dlp
+
     with yt_dlp.YoutubeDL(_ydl_options(flat=flat, start=start, end=end)) as ydl:
         return ydl.extract_info(url, download=False)
 
@@ -165,7 +163,7 @@ def _video_from_entry(entry, fallback_channel_name="", fallback_channel_url=""):
 
 
 class YtdlpVideoCollection:
-    metadata_workers = 100
+    metadata_workers = 4
 
     def __init__(self, url, kind="playlist", page_size=50):
         self.url = url
@@ -306,6 +304,9 @@ class YtdlpVideoCollection:
 
     def get_title(self, n):
         return self.videos[n]["title"]
+
+    def has_index(self, n):
+        return 0 <= n < len(self.videos)
 
     def get_type(self, n):
         return self.videos[n]["type"]

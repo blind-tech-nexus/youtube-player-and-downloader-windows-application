@@ -1,7 +1,7 @@
 [Setup]
 AppId=YouTube Player and Downloader
 AppName=YouTube Player and Downloader
-AppVersion=1.0
+AppVersion=1.1
 AppPublisher=Blind tech nexus team
 DefaultDirName={autopf}\YouTube Player and Downloader
 DefaultGroupName=YouTube Player and Downloader
@@ -29,7 +29,7 @@ Name: "{autodesktop}\YouTube Player and Downloader"; Filename: "{app}\YouTube Pl
 
 [Registry]
 Root: HKLM; Subkey: "Software\YouTube Player and Downloader"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\YouTube Player and Downloader"; ValueType: string; ValueName: "Version"; ValueData: "1.0"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\YouTube Player and Downloader"; ValueType: string; ValueName: "Version"; ValueData: "1.1"; Flags: uninsdeletekey
 
 [Code]
 function InitializeSetup(): Boolean;

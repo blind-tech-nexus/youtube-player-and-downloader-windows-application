@@ -11,6 +11,7 @@ defaults = {
 	"checkupdates": True,
 	"autoload": True,
 	"seek": 5,
+	"lastfilter": 0,
 	"conversion": 1,
 	"repeatetracks":False,
 	"autonext": False,

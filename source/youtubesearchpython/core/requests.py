@@ -41,12 +41,10 @@ class RequestCore:
 
     def syncGetRequest(self) -> httpx.Response:
         client_kwargs = self._get_client_kwargs()
-        client_kwargs["cookies"] = {'CONSENT': 'YES+1'}
         return httpx.get(self.url, **client_kwargs)
 
     async def asyncGetRequest(self) -> httpx.Response:
         client_kwargs = self._get_client_kwargs()
-        client_kwargs["cookies"] = {'CONSENT': 'YES+1'}
         async with httpx.AsyncClient(**client_kwargs) as client:
             r = await client.get(self.url)
             return r

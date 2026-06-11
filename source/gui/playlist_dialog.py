@@ -1,21 +1,14 @@
 # playlist_dialog.py
 import wx
 from youtube_browser.ytdlp_collections import PlaylistResult
-from download_handler.downloader import downloadAction
-from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT, format_from_option
-from media_player.media_gui import MediaGui
 from nvda_client.client import speak
-import pyperclip
-from gui.download_progress import DownloadProgress
 from settings_handler import config_get
 import webbrowser
 from threading import Thread
 import os
-from .activity_dialog import LoadingDialog
+from .activity_dialog import AsyncLoadingDialog, LoadingDialog
 import application
 from database import Favorite
-from gui.channel_dialog import ChannelDialog
-from utiles import get_audio_stream, get_video_stream
 
 class PlaylistDialog(wx.Dialog):
     def __init__(self, parent, url, views="", elements=""):
@@ -148,6 +141,7 @@ class PlaylistDialog(wx.Dialog):
         if not self.valid_selection():
             return
         n = self.videosBox.Selection
+        import pyperclip
         pyperclip.copy(self.result.get_url(n))
         wx.MessageBox("Video link copied successfully", "Done", parent=self)
 
@@ -157,6 +151,7 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.videos[n]['channel']['url']
         if url:
+            from gui.channel_dialog import ChannelDialog
             ChannelDialog(self, url)
 
     def onDownloadChannel(self, event):
@@ -165,6 +160,9 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         title = self.result.videos[n]["channel"]['name']
         url = self.result.videos[n]["channel"]['url']
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         option = int(config_get('defaultformat'))
         fmt, conv = self._format_from_option(option)
@@ -176,10 +174,15 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
-        stream = LoadingDialog(self, "Playing video...", get_video_stream, url).res
-        gui = MediaGui(self, title, stream, url, True, self.result)
-        gui.path = os.path.join(gui.path, self.title)
-        self.Hide()
+        from utiles import get_video_stream
+
+        def open_player(stream):
+            from media_player.media_gui import MediaGui
+            gui = MediaGui(self, title, stream, url, True, self.result)
+            gui.path = os.path.join(gui.path, self.title)
+            self.Hide()
+
+        AsyncLoadingDialog(self, "Playing video...", get_video_stream, open_player, url)
 
     def playAudio(self):
         if not self.valid_selection():
@@ -187,10 +190,15 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
-        stream = LoadingDialog(self, "Playing audio...", get_audio_stream, url).res
-        gui = MediaGui(self, title, stream, url, audio_mode=True, results=self.result)
-        gui.path = os.path.join(gui.path, self.title)
-        self.Hide()
+        from utiles import get_audio_stream
+
+        def open_player(stream):
+            from media_player.media_gui import MediaGui
+            gui = MediaGui(self, title, stream, url, audio_mode=True, results=self.result)
+            gui.path = os.path.join(gui.path, self.title)
+            self.Hide()
+
+        AsyncLoadingDialog(self, "Playing audio...", get_audio_stream, open_player, url)
 
     def onListBox(self, event):
         if not self.valid_selection():
@@ -201,7 +209,7 @@ class PlaylistDialog(wx.Dialog):
                 try:
                     if self.result.next():
                         titles = self.result.get_new_titles()
-                        wx.CallAfter(self.videosBox.Append, titles)
+                        wx.CallAfter(self.videosBox.AppendItems, titles)
                         speak("More videos loaded")
                     else:
                         speak("There are no more videos")
@@ -215,6 +223,10 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+        from download_handler.formats import VIDEO_DOWNLOAD_FORMAT
+
         dlg = DownloadProgress(self.Parent, title)
         path = os.path.join(config_get("path"), self.title)
         downloadAction(url, path, dlg, VIDEO_DOWNLOAD_FORMAT, convert=False, channel_or_playlist=False)
@@ -225,6 +237,9 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         option = int(config_get('defaultformat'))
         fmt, conv = self._format_from_option(option)
@@ -232,6 +247,7 @@ class PlaylistDialog(wx.Dialog):
         downloadAction(url, path, dlg, fmt, convert=conv, channel_or_playlist=False)
 
     def _format_from_option(self, option):
+        from download_handler.formats import format_from_option
         return format_from_option(option)
 
     def onM4aDownload(self, event):
@@ -240,6 +256,10 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+        from download_handler.formats import AUDIO_M4A_FORMAT
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         path = os.path.join(config_get("path"), self.title)
         downloadAction(url, path, dlg, AUDIO_M4A_FORMAT, convert=False, channel_or_playlist=False)
@@ -250,6 +270,10 @@ class PlaylistDialog(wx.Dialog):
         n = self.videosBox.Selection
         url = self.result.get_url(n)
         title = self.result.get_title(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+        from download_handler.formats import AUDIO_DOWNLOAD_FORMAT
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         path = os.path.join(config_get("path"), self.title)
         downloadAction(url, path, dlg, AUDIO_DOWNLOAD_FORMAT, convert=True, channel_or_playlist=False)
@@ -296,6 +320,9 @@ class PlaylistDialog(wx.Dialog):
         self.downloadPlaylistSelection(2)
 
     def downloadPlaylistSelection(self, option):
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), self.title)
         fmt, conv = self._format_from_option(option)
         downloadAction(self.url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=True)
@@ -326,14 +353,18 @@ class PlaylistDialog(wx.Dialog):
         self.downloadButton.Enabled = enabled
 
     def valid_selection(self):
-        return self.result is not None and self.result.has_results() and self.videosBox.Selection != -1
+        return (
+            self.result is not None
+            and self.result.has_results()
+            and self.result.has_index(self.videosBox.Selection)
+        )
 
     def back(self):
         self.Parent.Show()
         self.Destroy()
 
     def onHook(self, event):
-        if event.KeyCode in (wx.WXK_ESCAPE, wx.WXK_BACK) and not type(self.FindFocus()) == MediaGui:
+        if self.IsShown() and event.KeyCode in (wx.WXK_ESCAPE, wx.WXK_BACK):
             self.back()
         else:
             event.Skip()

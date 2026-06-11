@@ -1,10 +1,7 @@
 import wx
 import pyperclip
 import os
-from download_handler.downloader import Downloader
 from settings_handler import config_get, config_set
-from .download_progress import DownloadProgress
-from threading import Thread
 from utiles import youtube_regexp
 
 
@@ -77,12 +74,17 @@ class DownloadDialog(wx.Frame):
 			self.videoLink.SetValue(match.group()) # set the url box content to the detected youtube link if the box was not impty
 
 	def downloadingAction(self):
+		from download_handler.downloader import downloadAction
+		from download_handler.formats import (
+			VIDEO_DOWNLOAD_FORMAT,
+			AUDIO_M4A_FORMAT,
+			AUDIO_DOWNLOAD_FORMAT,
+		)
+
 		url = self.videoLink.GetValue()
 		if url == "" or youtube_regexp(url) is None:
-			def show_invalid_url():
-				wx.MessageBox("Please enter a valid link.", "Error", style=wx.ICON_ERROR, parent=self)
-				self.videoLink.SetFocus()
-			wx.CallAfter(show_invalid_url)
+			wx.MessageBox("Please enter a valid link.", "Error", style=wx.OK | wx.ICON_ERROR, parent=self)
+			self.videoLink.SetFocus()
 			return
 		cases = ("channel", "playlist", "/user/")
 		for case in cases:
@@ -94,44 +96,28 @@ class DownloadDialog(wx.Frame):
 				folder = True
 			else:
 				folder = False
-		formats = {0:"bestaudio[ext=m4a]", 1:"bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4"}
-		format = formats[self.downloadingFormat.GetSelection()]
-		if self.downloadingFormat.Selection == 0 and self.convertingFormat.Selection == 1:
-			convert = True
-		else:
+		# Radio box: selection 0 = Audio, 1 = Video
+		if self.downloadingFormat.GetSelection() == 1:
+			# Video download
+			fmt = VIDEO_DOWNLOAD_FORMAT
 			convert = False
-		downloader = Downloader(url, self.path, format, self.downloadFrame.gaugeProgress, self.downloadFrame.textProgress, convert=convert, folder=folder)
-		try:
-			wx.CallAfter(self.Hide)
-			self.downloading = True
-			wx.CallAfter(self.downloadFrame.Show)
-			downloader.download()
-		except Exception as e:
-			import traceback
-			print(f"Download error in downloadingAction: {e}")
-			traceback.print_exc()
-			def show_error():
-				wx.MessageBox("The link you entered is invalid. Try another link, or make sure you are connected to the internet.", "Error", style=wx.ICON_ERROR, parent=self)
-				self.videoLink.SetValue("")
-				self.Show()
-				self.videoLink.SetFocus()
-				self.downloadFrame.Destroy()
-			wx.CallAfter(show_error)
-			return
-		def show_success():
-			wx.MessageBox("Download completed successfully", "Success", parent=self.downloadFrame)
-			self.downloadFrame.Destroy()
-			self.Show()
-			self.videoLink.SetFocus()
-			self.videoLink.SetValue("")
-		wx.CallAfter(show_success)
+		else:
+			# Audio download — choice 0 = m4a, 1 = mp3
+			if self.convertingFormat.Selection == 1:
+				fmt = AUDIO_DOWNLOAD_FORMAT
+				convert = True
+			else:
+				fmt = AUDIO_M4A_FORMAT
+				convert = False
+		self.downloading = True
+		downloadAction(url, self.path, self.downloadFrame, fmt, convert=convert, channel_or_playlist=folder)
+
 
 	def onDownload(self, event):
 		config_set("defaultaudio", str(self.convertingFormat.Selection))
+		from .download_progress import DownloadProgress
 		self.downloadFrame = DownloadProgress(wx.GetApp().GetTopWindow())
-		t = Thread(target=self.downloadingAction)
-		t.daemon = True
-		t.start()
+		self.downloadingAction()
 	def onHook(self, event):
 		if event.KeyCode == wx.WXK_ESCAPE:
 			self.Destroy()

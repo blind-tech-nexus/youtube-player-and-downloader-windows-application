@@ -10,6 +10,18 @@ class SettingsDialog(wx.Dialog):
 		self.SetSize(500, 500)
 		self.Centre()
 		self.preferences = {}
+		self.initial_values = {
+			"path": config_get("path"),
+			"autodetect": config_get("autodetect"),
+			"checkupdates": config_get("checkupdates"),
+			"autoload": config_get("autoload"),
+			"continue": config_get("continue"),
+			"repeatetracks": config_get("repeatetracks"),
+			"autonext": config_get("autonext"),
+			"defaultformat": int(config_get("defaultformat")),
+			"conversion": int(config_get("conversion")),
+			"seek": int(config_get("seek")),
+		}
 		panel = wx.Panel(self)
 		lbl1 = wx.StaticText(panel, -1, "Download folder path: ", name="path")
 		self.pathField = wx.TextCtrl(panel, -1, value=config_get("path"), name="path", style=wx.TE_READONLY|wx.TE_MULTILINE|wx.HSCROLL)
@@ -33,6 +45,8 @@ class SettingsDialog(wx.Dialog):
 		self.continueWatching.Value = config_get("continue")
 		self.repeateTracks = wx.CheckBox(playerOptions, -1, "Repeat the current track when it ends", name="repeatetracks")
 		self.autoPlayNext = wx.CheckBox(playerOptions, -1, "Automatically play the next track when the current track ends", name="autonext")
+		lblSeek = wx.StaticText(playerOptions, -1, "Select a seek sequence")
+		self.seekSlider = wx.Slider(playerOptions, -1, value=int(config_get("seek")), minValue=1, maxValue=30, style=wx.SL_HORIZONTAL | wx.SL_LABELS)
 		self.autoPlayNext.Value = config_get('autonext')
 		self.repeateTracks.Value = config_get("repeatetracks")
 		okButton = wx.Button(panel, wx.ID_OK, "&OK", name="ok_cancel")
@@ -61,8 +75,13 @@ class SettingsDialog(wx.Dialog):
 		sizer4.Add(sizer5)
 		sizer4.Add(sizer6)
 		downloadPreferencesBox.SetSizer(sizer4)
-		for ctrl in playerOptions.GetChildren():
-			sizer7.Add(ctrl, 1)
+		sizer7.Add(self.continueWatching, 1)
+		sizer7.Add(self.repeateTracks, 1)
+		sizer7.Add(self.autoPlayNext, 1)
+		seekSizer = wx.BoxSizer(wx.HORIZONTAL)
+		seekSizer.Add(lblSeek, 1)
+		seekSizer.Add(self.seekSlider, 1)
+		sizer7.Add(seekSizer, 1, wx.EXPAND)
 		playerOptions.SetSizer(sizer7)
 		sizer.Add(sizer2, 1, wx.EXPAND)
 		sizer.Add(preferencesBox, 1, wx.EXPAND)
@@ -97,9 +116,62 @@ class SettingsDialog(wx.Dialog):
 			self.pathField.SetFocus()
 
 	def onOk(self, event):
-		for key, item in self.preferences.items():
-			config_set(key, item)
-		if not self.mp3Quality.Selection == int(config_get("conversion")):
-			config_set("conversion", self.mp3Quality.Selection)
-		config_set("defaultformat", self.formats.Selection) if not self.formats.Selection == int(config_get('defaultformat')) else None
+		import sys
+		import subprocess
+		import database
+
+		# Check if any change has been made
+		changed = False
+		current_path = self.pathField.Value
+		if current_path != self.initial_values["path"]:
+			changed = True
+		if self.autoDetectItem.Value != self.initial_values["autodetect"]:
+			changed = True
+		if self.autoCheckForUpdates.Value != self.initial_values["checkupdates"]:
+			changed = True
+		if self.autoLoadItem.Value != self.initial_values["autoload"]:
+			changed = True
+		if self.continueWatching.Value != self.initial_values["continue"]:
+			changed = True
+		if self.repeateTracks.Value != self.initial_values["repeatetracks"]:
+			changed = True
+		if self.autoPlayNext.Value != self.initial_values["autonext"]:
+			changed = True
+		if self.formats.Selection != self.initial_values["defaultformat"]:
+			changed = True
+		if self.mp3Quality.Selection != self.initial_values["conversion"]:
+			changed = True
+		if self.seekSlider.Value != self.initial_values["seek"]:
+			changed = True
+
+		# Save settings
+		config_set("path", current_path)
+		config_set("autodetect", self.autoDetectItem.Value)
+		config_set("checkupdates", self.autoCheckForUpdates.Value)
+		config_set("autoload", self.autoLoadItem.Value)
+		config_set("continue", self.continueWatching.Value)
+		config_set("repeatetracks", self.repeateTracks.Value)
+		config_set("autonext", self.autoPlayNext.Value)
+		config_set("defaultformat", self.formats.Selection)
+		config_set("conversion", self.mp3Quality.Selection)
+		config_set("seek", self.seekSlider.Value)
+
+		if changed:
+			res = wx.MessageBox(
+				"Would you like to restart the application for the instant changes?",
+				"Restart",
+				wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+				parent=self
+			)
+			if res == wx.YES:
+				try:
+					database.disconnect()
+				except Exception:
+					pass
+				python = sys.executable
+				subprocess.Popen([python] + sys.argv)
+				wx.GetApp().Exit()
+				self.Destroy()
+				return
+
 		self.Destroy()

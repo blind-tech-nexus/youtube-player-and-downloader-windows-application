@@ -1,5 +1,5 @@
 import wx
-from youtube_browser.search_handler import SEARCH_FILTERS
+from settings_handler import config_get, config_set
 
 
 
@@ -12,8 +12,12 @@ class SearchDialog(wx.Dialog):
 		lbl = wx.StaticText(panel, -1, "Search YouTube: ")
 		self.searchField = wx.TextCtrl(panel, -1, value=value)
 		lbl1 = wx.StaticText(panel, -1, "Filter: ")
+		from youtube_browser.search_handler import SEARCH_FILTERS
 		self.filterBox = wx.Choice(panel, -1, choices=[item["label"] for item in SEARCH_FILTERS])
-		self.filterBox.Selection = 0
+		try:
+			self.filterBox.Selection = min(max(int(config_get("lastfilter")), 0), len(SEARCH_FILTERS) - 1)
+		except (TypeError, ValueError):
+			self.filterBox.Selection = 0
 		searchButton = wx.Button(panel, wx.ID_OK, "Search")
 		searchButton.SetDefault()
 		searchButton.Enabled = False if value == "" else True
@@ -38,6 +42,7 @@ class SearchDialog(wx.Dialog):
 	def onSearch(self, event):
 		self.query = self.searchField.Value if self.searchField.Value != "" else None
 		self.filter = self.filterBox.Selection
+		config_set("lastfilter", self.filter)
 		self.Destroy()
 	def onClose(self, event):
 		self.query = None

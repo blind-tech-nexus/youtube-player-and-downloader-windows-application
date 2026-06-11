@@ -1,36 +1,26 @@
 import sys
 import os
-os.chdir	(os.path.abspath(os.path.dirname(__file__)))
-os.add_dll_directory(os.getcwd())
+from paths import get_app_base_dir
+
+app_base_dir = get_app_base_dir()
+os.chdir(app_base_dir)
+if hasattr(os, "add_dll_directory"):
+	os.add_dll_directory(app_base_dir)
 import settings_handler
-settings_handler.config_initialization() # calling the config_initialization function which sets up the accessible_youtube_downloader_pro.ini file in the user appdata folder
+settings_handler.config_initialization()
 import database
 import application
-import pyperclip
 import wx
 import webbrowser
 
 import subprocess
-from utiles import youtube_regexp, check_for_updates, get_audio_stream, get_video_stream
-from nvda_client.client import speak
-
-from gui.activity_dialog import LoadingDialog
-from gui.auto_detect_dialog import AutoDetectDialog
-from gui.download_dialog import DownloadDialog
-from gui.link_dlg import LinkDlg
-from gui.settings_dialog import SettingsDialog
-from gui.text_viewer import Viewer
+from utiles import youtube_regexp
 from gui.custom_controls import CustomLabel
-from gui.favorites import Favorites
 from doc_handler import documentation_get
-from media_player.media_gui import MediaGui
-from media_player.player import Player
-from youtube_browser.browser import YoutubeBrowser
 from threading import Thread
 
 
 class HomeScreen(wx.Frame):
-	# the main class
 	def __init__(self):
 		wx.Frame.__init__(self, parent=None, title=application.name)
 		self.Centre()
@@ -93,7 +83,7 @@ class HomeScreen(wx.Frame):
 		self.Bind(wx.EVT_MENU, self.onFavorite, favoriteItem)
 		favButton.Bind(wx.EVT_BUTTON, self.onFavorite)
 		self.Bind(wx.EVT_MENU, self.onOpen, openDownloadingPathItem)
-		self.Bind(wx.EVT_MENU, lambda event: SettingsDialog(self), settingsItem)
+		self.Bind(wx.EVT_MENU, self.onSettings, settingsItem)
 		self.Bind(wx.EVT_MENU, lambda event: wx.Exit(), exitItem)
 		self.Bind(wx.EVT_MENU, self.onGuide, userGuideItem)
 		self.Bind(wx.EVT_MENU, self.onCheckForUpdates, checkForUpdatesItem)
@@ -104,33 +94,53 @@ class HomeScreen(wx.Frame):
 		self.Bind(wx.EVT_SHOW, self.onShow)
 		self.Bind(wx.EVT_CLOSE, self.onClose)
 		self.Show()
+		wx.CallAfter(self.finish_startup)
+
+	def finish_startup(self):
 		self.detectFromClipboard(settings_handler.config_get("autodetect"))
 		if settings_handler.config_get("checkupdates"):
-			Thread(target=check_for_updates, args=[True]).start()
+			from utiles import check_for_updates
+			Thread(target=check_for_updates, args=[True], daemon=True).start()
 
 	def onPlay(self, event): # the event function called when the play youtube link is clicked
+		from gui.activity_dialog import AsyncLoadingDialog
+		from gui.link_dlg import LinkDlg
+		from utiles import get_audio_stream, get_video_stream
 		linkDlg = LinkDlg(self)
 		data = linkDlg.data # get the link and playing format from the dialog
+		if not data:
+			return
 		url = data["link"]
-		stream = LoadingDialog(self, "Loading playback", get_video_stream if not data["audio"] else get_audio_stream, url).res
-		gui = MediaGui(self, stream.title, stream, data["link"]) # initiating the media gui
-		self.Hide()
+		def open_player(stream):
+			from media_player.media_gui import MediaGui
+			title = stream.get("title") or url
+			MediaGui(self, title, stream, data["link"], audio_mode=data["audio"]) # initiating the media gui
+			self.Hide()
+		AsyncLoadingDialog(self, "Fetching streaming URL...", get_audio_stream if data["audio"] else get_video_stream, open_player, url)
 
 	def onDownload(self, event): # the event function for the link downloading item to show the appropriate dialog
+		from gui.download_dialog import DownloadDialog
 		dlg = DownloadDialog(self)
 		dlg.Show()
 	def onSearch(self, event): # showing the youtube browser window event function
+		from youtube_browser.browser import YoutubeBrowser
 		browser = YoutubeBrowser(self)
 	def detectFromClipboard(self, config):
 		if not config:
 			return
+		import pyperclip
+		from gui.auto_detect_dialog import AutoDetectDialog
 		clip_content = pyperclip.paste() # get the clipboard content
 		match = youtube_regexp(clip_content)
 		if match is not None:
 			AutoDetectDialog(self, clip_content)
 	def onFavorite(self, event):
+		from gui.favorites import Favorites
 		Favorites(self)
 		self.Hide()
+	def onSettings(self, event):
+		from gui.settings_dialog import SettingsDialog
+		SettingsDialog(self)
 	def onOpen(self, event):
 		path = settings_handler.config_get("path")
 		if not os.path.exists(path):
@@ -143,6 +153,7 @@ class HomeScreen(wx.Frame):
 			if content is None:
 				event.Skip()
 				return
+			from gui.text_viewer import Viewer
 			Viewer(self, "YouTube player and downloader user guide", content)
 		event.Skip()
 	def onShow(self, event):
@@ -151,9 +162,11 @@ class HomeScreen(wx.Frame):
 		content = documentation_get()
 		if content is None:
 			return
+		from gui.text_viewer import Viewer
 		Viewer(self, "YouTube player and downloader user guide", content).ShowModal()
 	def onCheckForUpdates(self, event):
 		from gui.activity_dialog import LoadingDialog
+		from utiles import check_for_updates
 		# speak("Checking for updates. Please wait")
 		LoadingDialog(self, "Checking for updates. Please wait", check_for_updates)
 		self.instruction.SetFocus()

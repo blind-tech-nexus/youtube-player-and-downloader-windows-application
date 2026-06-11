@@ -1,13 +1,5 @@
 import wx
 
-from .playlist_dialog import PlaylistDialog
-from .download_dialog import DownloadDialog
-
-from media_player.media_gui import MediaGui
-from utiles import get_video_stream, get_audio_stream
-
-
-
 def link_type(url):
 	cases = ("list", "channel", "playlist", "/user/")
 	if cases[0] in url or cases[2] in url:
@@ -36,19 +28,22 @@ class AutoDetectDialog(wx.Dialog):
 		playButton.Bind(wx.EVT_BUTTON, self.onPlay)
 		self.ShowModal()
 	def onDownload(self, event):
+		from .download_dialog import DownloadDialog
 		dlg = DownloadDialog(wx.GetApp().GetTopWindow(), self.url)
 		dlg.Show()
 		self.Destroy()
 	def onPlay(self, event):
 		if link_type(self.url) == "Playlist":
+			from .playlist_dialog import PlaylistDialog
 			PlaylistDialog(self.Parent, self.url)
 			self.Destroy()
 			return
-		from .activity_dialog import LoadingDialog
+		from .activity_dialog import AsyncLoadingDialog
+		from utiles import get_audio_stream
 		parent = self.Parent
+		url = self.url
 		self.Destroy()
-		stream = LoadingDialog(parent, "Loading playback", get_audio_stream, self.url).res
-		gui = MediaGui(parent, stream.title, stream, self.url)
-
-
-
+		def open_player(stream):
+			from media_player.media_gui import MediaGui
+			MediaGui(parent, stream.get("title") or url, stream, url, audio_mode=True)
+		AsyncLoadingDialog(parent, "Fetching streaming URL...", get_audio_stream, open_player, url)

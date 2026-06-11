@@ -1,22 +1,12 @@
-# media_gui.py
 import webbrowser
 import pyperclip
 import wx
-from gui.download_progress import DownloadProgress
-from download_handler.downloader import downloadAction
-from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT
-from nvda_client.client import speak
-from settings_handler import config_get, config_set
-import application
-from utiles import get_audio_stream, get_video_stream
-from vlc import State, Media
-from gui.settings_dialog import SettingsDialog
-from gui.description import DescriptionDialog
-from gui.custom_controls import CustomButton
-from youtubesearchpython import Video
+import wx.adv
+import wx.lib.agw.toasterbox as TB
 from threading import Thread
+import application
+from settings_handler import config_get, config_set
 from database import Continue
-from media_player.player import Player
 
 
 def has_player(method):
@@ -41,7 +31,9 @@ class MediaGui(wx.Frame):
         self.Maximize(True)
         self.SetBackgroundColour(wx.BLACK)
         self.player = None
+        self._closing = False
         self.url = url
+        from gui.custom_controls import CustomButton
         previousButton = CustomButton(self, -1, "Previous track", name="controls")
         previousButton.Show() if self.results is not None else previousButton.Hide()
         beginingButton = CustomButton(self, -1, "Start of track", name="controls")
@@ -76,7 +68,7 @@ class MediaGui(wx.Frame):
         settingsItem = trackOptions.Append(-1, "Settings...\talt+s")
         hotKeys = wx.AcceleratorTable([
             (wx.ACCEL_CTRL, ord("D"), directDownloadItem.GetId()),
-            (wx.ACCEL_CTRL|wx.ACCEL_SHIFT, ord("D"), descriptionItem.GetId()),
+            (wx.ACCEL_CTRL | wx.ACCEL_SHIFT, ord("D"), descriptionItem.GetId()),
             (wx.ACCEL_CTRL, ord("L"), copyItem.GetId()),
             (wx.ACCEL_CTRL, ord("B"), browserItem.GetId()),
             (wx.ACCEL_ALT, ord("S"), settingsItem.GetId()),
@@ -107,56 +99,120 @@ class MediaGui(wx.Frame):
         playButton.Bind(wx.EVT_BUTTON, lambda event: self.playAction())
         forwardButton.Bind(wx.EVT_BUTTON, lambda event: self.forwardAction())
         nextButton.Bind(wx.EVT_BUTTON, lambda event: self.next())
-        self.Bind(wx.EVT_CLOSE, lambda event: self.closeAction())
+        self.Bind(wx.EVT_CLOSE, self.onClose)
         self.Show()
-        self.player = Player(stream["url"], self.GetHandle(), self)
-        if self.url in Continue.get_all() and config_get("continue"):
-            self.player.media.set_position(Continue.get_all()[url])
-        Thread(target=self.extract_description).start()
+        self.SetFocus()
+        self._start_playback(stream, url)
 
+    def _start_playback(self, stream, url):
+        from media_player.player import Player
+        try:
+            player = Player(stream["url"], self.GetHandle(), self)
+        except Exception as e:
+            wx.MessageBox(
+                f"Failed to initialize player:\n{e}",
+                "Player Error",
+                wx.ICON_ERROR,
+                self,
+            )
+            return
+        self.player = player
+        if config_get("continue"):
+            try:
+                saved = Continue.get_all()
+                self.player.resume_from(saved.get(url))
+            except Exception:
+                pass
+        self.player.start()
+        Thread(target=self.extract_description, daemon=True).start()
+
+    @has_player
     def playAction(self):
+        import vlc
         state = self.player.media.get_state()
-        if state in (State.NothingSpecial, State.Stopped):
+        if state in (vlc.State.NothingSpecial, vlc.State.Stopped, vlc.State.Ended):
             self.player.media.play()
-        elif state in (State.Playing, State.Paused):
+        elif state in (vlc.State.Playing, vlc.State.Paused, vlc.State.Buffering, vlc.State.Opening):
             if not self.stream:
                 self.player.media.pause()
-            else: 
-                self.player.media.stop()
+            else:
+                self.player.stop_async()
 
     @has_player
     def forwardAction(self):
         position = self.player.media.get_position()
-        self.player.media.set_position(position+self.player.seek(self.seek))
+        self.player.media.set_position(position + self.player.seek(self.seek))
 
     @has_player
     def rewindAction(self):
         position = self.player.media.get_position()
-        self.player.media.set_position(position-self.player.seek(self.seek))
+        self.player.media.set_position(position - self.player.seek(self.seek))
 
+    @has_player
     def set_position(self, key):
-        step = int(chr(key))/10
+        step = int(chr(key)) / 10
         self.player.media.set_position(step)
+        from nvda_client.client import speak
         speak("Elapsed time: {}".format(self.player.get_elapsed()))
 
     @has_player
     def beginingAction(self):
+        import vlc
         self.player.media.set_position(0.0)
+        from nvda_client.client import speak
         speak("Start of track")
-        if self.player.media.get_state() in (State.NothingSpecial, State.Stopped):
+        if self.player.media.get_state() in (vlc.State.NothingSpecial, vlc.State.Stopped, vlc.State.Ended):
             self.player.media.play()
 
     def closeAction(self):
+        if self._closing:
+            return
+        self._closing = True
         if self.player is not None:
-            if self.player.media.get_position() in (0.0, -1) and self.url in Continue.get_all():
-                Continue.remove_continue(self.url)
-            elif self.url in Continue.get_all():
-                Continue.update(self.url, self.player.media.get_position())
-            else:
-                Continue.new_continue(self.url, self.player.media.get_position())
-            self.player.media.stop()
-        self.GetParent().Show()
+            try:
+                position = self.player.media.get_position()
+                saved = Continue.get_all()
+                if position in (0.0, -1) and self.url in saved:
+                    Continue.remove_continue(self.url)
+                elif self.url in saved:
+                    Continue.update(self.url, position)
+                else:
+                    Continue.new_continue(self.url, position)
+            except Exception:
+                pass
+            self.player.close()
+            self.player = None
+        try:
+            self.UnregisterHotKey(self.prev_id)
+            self.UnregisterHotKey(self.play_pause_id)
+            self.UnregisterHotKey(self.next_id)
+        except Exception:
+            pass
+        if self.GetParent():
+            self.GetParent().Show()
+            self.GetParent().SetFocus()
         self.Destroy()
+
+    def onClose(self, event):
+        self.closeAction()
+
+    def show_toast(self, title, message):
+        try:
+            tb = TB.ToasterBox(self, tbstyle=TB.TB_SIMPLE)
+            tb.SetPopupSize((300, 80))
+            tb.SetPopupPauseTime(3000)
+            tb.SetPopupText(f"{title}\n{message}")
+            tb.Play()
+        except Exception:
+            wx.CallAfter(wx.MessageBox, message, title, parent=self)
+
+    def speak_time(self, label, value):
+        from nvda_client.client import speak
+        if not value:
+            value = "unknown"
+        message = f"{label}: {value}"
+        speak(message)
+        self.show_toast(label, message)
 
     def registerHotKey(self):
         self.RegisterHotKey(
@@ -178,6 +234,8 @@ class MediaGui(wx.Frame):
             self.next()
 
     def onKeyDown(self, event):
+        from nvda_client.client import speak
+
         event.Skip()
         if event.GetKeyCode() in (wx.WXK_SPACE, wx.WXK_PAUSE):
             self.playAction()
@@ -202,6 +260,12 @@ class MediaGui(wx.Frame):
         elif event.controlDown and event.shiftDown and event.KeyCode == ord("T"):
             if self.player is not None:
                 speak("Elapsed time: {}".format(self.player.get_elapsed()))
+        elif event.KeyCode == ord("C"):
+            if self.player is not None:
+                self.speak_time("Current time", self.player.get_elapsed())
+        elif event.KeyCode == ord("R") and not event.HasAnyModifiers():
+            if self.player is not None:
+                self.speak_time("Remaining time", self.player.get_remaining())
         elif event.KeyCode == ord("S"):
             if self.player is not None:
                 self.player.media.set_rate(1.4)
@@ -222,8 +286,8 @@ class MediaGui(wx.Frame):
             config_set("seek", self.seek)
         elif event.GetKeyCode() in (ord("="), wx.WXK_NUMPAD_ADD):
             self.seek += 1
-            if self.seek > 10:
-                self.seek = 10
+            if self.seek > 30:
+                self.seek = 30
             speak("{} {} {}".format("Seek", self.seek, "seconds"))
             config_set("seek", self.seek)
         elif event.KeyCode == ord("R"):
@@ -248,28 +312,32 @@ class MediaGui(wx.Frame):
         elif event.KeyCode == wx.WXK_ALT:
             if self.IsFullScreen():
                 self.ShowFullScreen(False)
-        elif event.GetKeyCode() == wx.WXK_ESCAPE:
+        elif event.GetKeyCode() in (wx.WXK_ESCAPE, wx.WXK_BACK):
             self.closeAction()
 
     @has_player
     def get_duration(self):
+        from nvda_client.client import speak
         speak("Duration: {}".format(self.player.get_duration()))
 
     @has_player
     def increase_volume(self):
-        self.player.volume = self.player.volume+5 if self.player.volume < 350 else 350
+        from nvda_client.client import speak
+        self.player.volume = self.player.volume + 5 if self.player.volume < 350 else 350
         self.player.media.audio_set_volume(self.player.volume)
         speak(f"{self.player.volume}%")
         config_set("volume", self.player.volume)
 
     @has_player
     def decrease_volume(self):
-        self.player.volume = self.player.volume-5 if self.player.volume > 0 else 0
+        from nvda_client.client import speak
+        self.player.volume = self.player.volume - 5 if self.player.volume > 0 else 0
         self.player.media.audio_set_volume(self.player.volume)
         speak(f"{self.player.volume}%")
         config_set("volume", self.player.volume)
 
     def togleFullScreen(self):
+        from nvda_client.client import speak
         self.ShowFullScreen(not self.IsFullScreen())
         if self.IsFullScreen():
             speak("Full screen on")
@@ -277,28 +345,42 @@ class MediaGui(wx.Frame):
             speak("Full screen off")
 
     def changeTrack(self, index):
+        from nvda_client.client import speak
+        from utiles import get_video_stream, get_audio_stream
+        from gui.activity_dialog import AsyncLoadingDialog
         if not isinstance(self.results, list):
             url = self.results.get_url(index)
             title = self.results.get_title(index)
         else:
             url = self.results[index]["url"]
             title = self.results[index]["title"]
-        self.player.media.stop()
+        if self.player is not None:
+            self.player.stop_async()
         if hasattr(self, "description"):
-            del self.description 
-        try:
-            stream = get_video_stream(url) if not self.audio_mode else get_audio_stream(url)
-        except:
-            return
-        self.player.set_media(stream["url"])
-        self.url = url
-        self.title = title
-        wx.CallAfter(self.SetTitle, f"{title} - {application.name}")
-        self.player.media.play()
-        self.player.media.audio_set_volume(self.player.volume)
-        Thread(target=self.extract_description).start()
+            del self.description
+
+        fetch_fn = get_audio_stream if self.audio_mode else get_video_stream
+        label = "Playing audio..." if self.audio_mode else "Playing video..."
+
+        def apply_stream(stream):
+            if self._closing:
+                return
+            self.url = url
+            self.title = title
+            self.SetTitle(f"{title} - {application.name}")
+            if self.player is None:
+                self._start_playback(stream, url)
+                return
+            self.player.play_url(stream["url"])
+            Thread(target=self.extract_description, daemon=True).start()
+
+        def on_error(e):
+            speak("The app could not fetch the streaming URL")
+
+        AsyncLoadingDialog(self, label, fetch_fn, apply_stream, url, on_error=on_error)
 
     def next(self):
+        from nvda_client.client import speak
         if self.results is None:
             return
         if hasattr(self.Parent, 'searchResults'):
@@ -314,15 +396,15 @@ class MediaGui(wx.Frame):
                 self.changeTrack(index)
             return
         self.changeTrack(index)
-        if index >= self.results.count-2:
+        if index >= self.results.count - 2:
             def load_more():
                 if hasattr(self.Parent, 'searchResults'):
                     if self.results.load_more():
-                        wx.CallAfter(self.Parent.searchResults.Append, self.results.get_last_titles())
+                        wx.CallAfter(self.Parent.searchResults.AppendItems, self.results.get_last_titles())
                 else:
                     if self.results.next():
-                        wx.CallAfter(self.Parent.videosBox.Append, self.results.get_new_titles())
-            Thread(target=load_more).start()
+                        wx.CallAfter(self.Parent.videosBox.AppendItems, self.results.get_new_titles())
+            Thread(target=load_more, daemon=True).start()
 
     def previous(self):
         if self.results is None:
@@ -344,10 +426,13 @@ class MediaGui(wx.Frame):
         wx.MessageBox("Video link copied successfully", "Done", parent=self)
 
     def onBrowser(self, event):
+        from nvda_client.client import speak
         speak("Opening")
         webbrowser.open(self.url)
 
     def execute_download(self, d_format, convert=False):
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), self.title)
         downloadAction(
             url=self.url,
@@ -359,15 +444,19 @@ class MediaGui(wx.Frame):
         )
 
     def onM4aDownload(self, event):
+        from download_handler.formats import AUDIO_M4A_FORMAT
         self.execute_download(AUDIO_M4A_FORMAT, convert=False)
 
     def onMp3Download(self, event):
+        from download_handler.formats import AUDIO_DOWNLOAD_FORMAT
         self.execute_download(AUDIO_DOWNLOAD_FORMAT, convert=True)
 
     def onVideoDownload(self, event):
+        from download_handler.formats import VIDEO_DOWNLOAD_FORMAT
         self.execute_download(VIDEO_DOWNLOAD_FORMAT, convert=False)
 
     def onDirect(self, event):
+        from download_handler.formats import AUDIO_M4A_FORMAT, AUDIO_DOWNLOAD_FORMAT, VIDEO_DOWNLOAD_FORMAT
         def_format = int(config_get('defaultformat'))
         if def_format == 1:
             self.execute_download(AUDIO_M4A_FORMAT, convert=False)
@@ -377,12 +466,16 @@ class MediaGui(wx.Frame):
             self.execute_download(VIDEO_DOWNLOAD_FORMAT, convert=False)
 
     def onDescription(self, event):
+        from nvda_client.client import speak
+        from gui.description import DescriptionDialog
         if hasattr(self, "description"):
             DescriptionDialog(self, self.description)
             return
+
         def extract_description():
             try:
                 speak("Fetching video description")
+                from youtubesearchpython import Video
                 info = Video.getInfo(self.url)
             except Exception as e:
                 print(e)
@@ -390,11 +483,12 @@ class MediaGui(wx.Frame):
                 return
             self.description = info['description']
             wx.CallAfter(DescriptionDialog, self, self.description)
-        Thread(target=extract_description).start()
+        Thread(target=extract_description, daemon=True).start()
 
     def extract_description(self):
         try:
+            from youtubesearchpython import Video
             info = Video.get(self.url)
-        except:
+        except Exception:
             return
         self.description = info['description']

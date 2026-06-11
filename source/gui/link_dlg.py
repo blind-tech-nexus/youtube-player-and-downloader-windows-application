@@ -6,6 +6,7 @@ from utiles import youtube_regexp
 class LinkDlg(wx.Dialog):
 	def __init__(self, parent):
 		wx.Dialog.__init__(self, parent=parent, title="Enter a video link to play it in the app player")
+		self.data = None
 		self.Centre()
 		panel = wx.Panel(self)
 		sizer = wx.BoxSizer(wx.VERTICAL)
@@ -27,6 +28,7 @@ class LinkDlg(wx.Dialog):
 		sizer.Add(okCancelSizer, 1)
 		panel.SetSizer(sizer)
 		self.okButton.Bind(wx.EVT_BUTTON, self.onOk)
+		cancelButton.Bind(wx.EVT_BUTTON, self.onClose)
 		self.link.Bind(wx.EVT_TEXT, self.onText)
 		self.detectFromClipboard()
 		self.ShowModal()
@@ -34,6 +36,9 @@ class LinkDlg(wx.Dialog):
 		link = self.link.Value
 		audio = True if self.mode.Selection == 1 else False
 		self.data = {"link": link, "audio": audio}
+		self.Destroy()
+	def onClose(self, event):
+		self.data = None
 		self.Destroy()
 	def isYoutubeLink(self, value):
 		match = youtube_regexp(value)

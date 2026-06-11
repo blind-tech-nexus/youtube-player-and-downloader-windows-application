@@ -1,23 +1,8 @@
-# browser.py
 import webbrowser
 from threading import Thread
-import pyperclip
 import wx
-from gui.download_progress import DownloadProgress
-from gui.search_dialog import SearchDialog
-from gui.settings_dialog import SettingsDialog
-from gui.playlist_dialog import PlaylistDialog
-from gui.channel_dialog import ChannelDialog
-from gui.activity_dialog import LoadingDialog
-from download_handler.downloader import downloadAction
-from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT, format_from_option
-from media_player.media_gui import MediaGui
-from media_player.player import Player
-from nvda_client.client import speak
 from settings_handler import config_get
-from youtube_browser.search_handler import Search
-from utiles import get_audio_stream, get_video_stream
-from database import Favorite, Continue
+from database import Favorite
 
 
 class YoutubeBrowser(wx.Frame):
@@ -46,6 +31,7 @@ class YoutubeBrowser(wx.Frame):
         self.loadMoreButton.Enabled = False
         self.loadMoreButton.Show(not config_get("autoload"))
         self.playButton = wx.Button(self.panel, -1, "Play video (enter)", name="controls")
+        self.openChannelButton = wx.Button(self.panel, -1, "Open channel", name="controls")
         self.downloadButton = wx.Button(self.panel, -1, "Download", name="controls")
         self.favCheck = wx.CheckBox(self.panel, -1, "Favorite")
         searchButton = wx.Button(self.panel, -1, "Search... (ctrl+f)")
@@ -93,6 +79,7 @@ class YoutubeBrowser(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda event: SettingsDialog(self), settingsItem)
         self.loadMoreButton.Bind(wx.EVT_BUTTON, self.onLoadMore)
         self.playButton.Bind(wx.EVT_BUTTON, self.onPlayButton)
+        self.openChannelButton.Bind(wx.EVT_BUTTON, self.onOpenChannel)
         self.downloadButton.Bind(wx.EVT_BUTTON, self.onDownload)
         self.favCheck.Bind(wx.EVT_CHECKBOX, self.onFavorite)
         searchButton.Bind(wx.EVT_BUTTON, self.onSearch)
@@ -114,6 +101,7 @@ class YoutubeBrowser(wx.Frame):
         self.toggleFavorite()
 
     def searchAction(self, value=""):
+        from gui.search_dialog import SearchDialog
         dialog = SearchDialog(self, value=value)
         query = dialog.query
         filter = dialog.filter
@@ -122,7 +110,12 @@ class YoutubeBrowser(wx.Frame):
             self.toggleControls()
             return False
 
-        loading = LoadingDialog(self, "Searching", Search, query, filter)
+        def create_search(search_query, search_filter):
+            from youtube_browser.search_handler import Search
+            return Search(search_query, search_filter)
+
+        from gui.activity_dialog import LoadingDialog
+        loading = LoadingDialog(self, "Searching", create_search, query, filter)
 
         if loading.error:
             wx.MessageBox(f"Search could not be completed.\n\n{loading.error}", "Error", style=wx.OK | wx.ICON_ERROR)
@@ -164,16 +157,19 @@ class YoutubeBrowser(wx.Frame):
             self.searchAction()
 
     def playVideo(self):
+        from nvda_client.client import speak
         number = self.searchResults.Selection
         if number == -1:
             return
         result_type = self.search.get_type(number)
         if result_type == "playlist":
+            from gui.playlist_dialog import PlaylistDialog
             views = self.search.get_views(number)
             elements = self.search.get_elements(number)
             PlaylistDialog(self, self.search.get_url(number), views=views, elements=elements)
             return
         if result_type == "channel":
+            from gui.channel_dialog import ChannelDialog
             subscribers = self.search.get_subscribers(number)
             elements = self.search.get_elements(number)
             ChannelDialog(self, self.search.get_url(number), subscribers=subscribers, elements=elements)
@@ -182,9 +178,15 @@ class YoutubeBrowser(wx.Frame):
             return
         title = self.search.get_title(number)
         url = self.search.get_url(number)
-        stream = LoadingDialog(self, "Playing video", get_video_stream, url).res
-        gui = MediaGui(self, title, stream, url, self.can_direct_download(result_type, self.search.get_views(number)), results=self.search)
-        self.Hide()
+        from utiles import get_video_stream
+
+        def open_player(stream):
+            from media_player.media_gui import MediaGui
+            MediaGui(self, title, stream, url, self.can_direct_download(result_type, self.search.get_views(number)), results=self.search)
+            self.Hide()
+
+        from gui.activity_dialog import AsyncLoadingDialog
+        AsyncLoadingDialog(self, "Playing video...", get_video_stream, open_player, url)
 
     def playAudio(self):
         number = self.searchResults.Selection
@@ -195,9 +197,15 @@ class YoutubeBrowser(wx.Frame):
             return
         title = self.search.get_title(number)
         url = self.search.get_url(number)
-        stream = LoadingDialog(self, "Playing audio", get_audio_stream, url).res
-        gui = MediaGui(self, title, stream, url, results=self.search, audio_mode=True)
-        self.Hide()
+        from utiles import get_audio_stream
+
+        def open_player(stream):
+            from media_player.media_gui import MediaGui
+            MediaGui(self, title, stream, url, results=self.search, audio_mode=True)
+            self.Hide()
+
+        from gui.activity_dialog import AsyncLoadingDialog
+        AsyncLoadingDialog(self, "Playing audio...", get_audio_stream, open_player, url)
 
     def onListMouseDown(self, event):
         self._mouse_selecting = True
@@ -226,7 +234,7 @@ class YoutubeBrowser(wx.Frame):
         if event.KeyCode == wx.WXK_SPACE and n != -1 and self.is_favoritable_result(self.search.get_type(n)) and self.FindFocus() == self.searchResults:
             self.favCheck.Value = not self.favCheck.Value
             self.onFavorite(None)
-        elif event.KeyCode == wx.WXK_BACK and not isinstance(self.FindFocus(), MediaGui):
+        elif event.KeyCode == wx.WXK_BACK:
             self.backAction()
         else:
             event.Skip()
@@ -301,6 +309,7 @@ class YoutubeBrowser(wx.Frame):
         result_type = self.search.get_type(n)
         url = self.search.get_url(n) if result_type == "channel" else self.search.get_channel(n)["url"]
         if url:
+            from gui.channel_dialog import ChannelDialog
             ChannelDialog(self, url)
 
     def onDownloadChannel(self, event):
@@ -319,11 +328,15 @@ class YoutubeBrowser(wx.Frame):
         self.download_channel_url(url, title, int(config_get('defaultformat')))
 
     def download_channel_url(self, url, title, option):
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         fmt, conv = self._format_from_option(option)
         downloadAction(url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=True)
 
     def _format_from_option(self, option):
+        from download_handler.formats import format_from_option
         return format_from_option(option)
 
     def onOpenInBrowser(self, event):
@@ -342,6 +355,9 @@ class YoutubeBrowser(wx.Frame):
             return
         url = self.search.get_url(n)
         title = self.search.get_title(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         is_channel_or_playlist = result_type in ("channel", "playlist")
         fmt, conv = self._format_from_option(int(config_get('defaultformat')))
@@ -354,6 +370,10 @@ class YoutubeBrowser(wx.Frame):
         url = self.search.get_url(n)
         title = self.search.get_title(n)
         result_type = self.search.get_type(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+        from download_handler.formats import AUDIO_M4A_FORMAT
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         downloadAction(url, config_get('path'), dlg, AUDIO_M4A_FORMAT, convert=False, channel_or_playlist=(result_type in ("channel", "playlist")))
 
@@ -364,6 +384,10 @@ class YoutubeBrowser(wx.Frame):
         url = self.search.get_url(n)
         title = self.search.get_title(n)
         result_type = self.search.get_type(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+        from download_handler.formats import AUDIO_DOWNLOAD_FORMAT
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         downloadAction(url, config_get('path'), dlg, AUDIO_DOWNLOAD_FORMAT, convert=True, channel_or_playlist=(result_type in ("channel", "playlist")))
 
@@ -374,6 +398,10 @@ class YoutubeBrowser(wx.Frame):
         url = self.search.get_url(n)
         title = self.search.get_title(n)
         result_type = self.search.get_type(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+        from download_handler.formats import VIDEO_DOWNLOAD_FORMAT
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         downloadAction(url, config_get('path'), dlg, VIDEO_DOWNLOAD_FORMAT, convert=False, channel_or_playlist=(result_type in ("channel", "playlist")))
 
@@ -408,16 +436,16 @@ class YoutubeBrowser(wx.Frame):
     def onCopy(self, event):
         if self.searchResults.Selection == -1 or not hasattr(self, "search"):
             return
+        import pyperclip
         pyperclip.copy(self.search.get_url(self.searchResults.Selection))
         wx.MessageBox("Video link copied successfully", "Done", parent=self)
 
     def loadMore(self):
-        if self.searchResults.Strings == [] or not self.has_real_results():
-            return
         if self._loading_more:
             return
         self._loading_more = True
         try:
+            from nvda_client.client import speak
             speak("Loading more results")
             try:
                 ok = self.search.load_more()
@@ -430,7 +458,7 @@ class YoutubeBrowser(wx.Frame):
             if not new_titles:
                 return
             self._suppress_autoplay = True
-            wx.CallAfter(self.searchResults.Append, new_titles)
+            wx.CallAfter(self.searchResults.AppendItems, new_titles)
             speak("More search results loaded")
             wx.CallAfter(self.searchResults.SetFocus)
         finally:
@@ -455,7 +483,7 @@ class YoutubeBrowser(wx.Frame):
             self.loadMoreButton.Enabled = False
 
     def onLoadMore(self, event):
-        if self._loading_more:
+        if self.searchResults.Strings == [] or not self.has_real_results() or self._loading_more:
             return
         Thread(target=self.loadMore, daemon=True).start()
 
@@ -509,27 +537,38 @@ class YoutubeBrowser(wx.Frame):
         if result_type == "playlist":
             self.playButton.Label = "Open playlist"
             self.playButton.Enabled = True
+            self.openChannelButton.Enabled = False
+            self.openChannelButton.Label = "Open channel"
             for i in contextMenuIds:
                 self.contextMenu.Enable(i, False)
             return
         if result_type == "channel":
             self.playButton.Label = "Open channel"
             self.playButton.Enabled = True
+            self.openChannelButton.Enabled = False
+            self.openChannelButton.Label = "Open channel"
             for i in contextMenuIds:
                 self.contextMenu.Enable(i, False)
             return
         if not self.is_playable_result(result_type):
             self.playButton.Label = "Play video (enter)"
             self.playButton.Enabled = False
+            self.openChannelButton.Enabled = False
+            self.openChannelButton.Label = "Open channel"
             for i in contextMenuIds:
                 self.contextMenu.Enable(i, False)
             return
         self.playButton.Label = "Play video (enter)"
         self.playButton.Enabled = True
+        channel = self.search.get_channel(n)
+        channel_name = channel.get("name") or "channel"
+        self.openChannelButton.Label = f"Open {channel_name}"
+        self.openChannelButton.Enabled = bool(channel.get("url"))
         for i in contextMenuIds:
             self.contextMenu.Enable(i, True)
 
     def onFavorite(self, event):
+        from nvda_client.client import speak
         n = self.searchResults.Selection
         if n == -1 or not self.has_real_results():
             return
@@ -601,6 +640,9 @@ class YoutubeBrowser(wx.Frame):
             return
         url = self.search.get_url(n)
         title = self.search.get_title(n)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         option = int(config_get('defaultformat'))
         fmt, conv = self._format_from_option(option)
@@ -616,11 +658,13 @@ class YoutubeBrowser(wx.Frame):
             return
         result_type = self.search.get_type(n)
         if result_type == "playlist":
+            from gui.playlist_dialog import PlaylistDialog
             views = self.search.get_views(n)
             elements = self.search.get_elements(n)
             PlaylistDialog(self, self.search.get_url(n), views=views, elements=elements)
             return
         if result_type == "channel":
+            from gui.channel_dialog import ChannelDialog
             subscribers = self.search.get_subscribers(n)
             elements = self.search.get_elements(n)
             ChannelDialog(self, self.search.get_url(n), subscribers=subscribers, elements=elements)

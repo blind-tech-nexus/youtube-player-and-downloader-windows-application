@@ -2,18 +2,10 @@
 import wx
 import application
 from database import Favorite
-from download_handler.downloader import downloadAction
-from download_handler.formats import AUDIO_DOWNLOAD_FORMAT, AUDIO_M4A_FORMAT, VIDEO_DOWNLOAD_FORMAT, format_from_option
-from media_player.media_gui import MediaGui
 from nvda_client.client import speak
-import pyperclip
-from gui.download_progress import DownloadProgress
-from .activity_dialog import LoadingDialog
+from .activity_dialog import AsyncLoadingDialog, LoadingDialog
 from settings_handler import config_get
 import webbrowser
-from gui.playlist_dialog import PlaylistDialog
-from gui.channel_dialog import ChannelDialog
-from utiles import get_audio_stream, get_video_stream
 
 
 class Favorites(wx.Frame):
@@ -26,13 +18,14 @@ class Favorites(wx.Frame):
         l1 = wx.StaticText(p, -1, "Favorites: ")
         self.favList = wx.ListBox(p, -1)
         self.playButton = wx.Button(p, -1, "Play", name="control")
+        self.openChannelButton = wx.Button(p, -1, "Open channel", name="control")
         self.downloadButton = wx.Button(p, -1, "Download", name="control")
         self.deleteButton = wx.Button(p, -1, "Remove from favorites", name="control")
         backButton = wx.Button(p, -1, "Back to main window", name="control")
         self.favorites = Favorite()
         self.rows = self.favorites.get_all()
-        self.favList.Set([row["display_title"] for row in self.rows])
-        if self.favList.Strings:
+        self.refresh_list()
+        if self.rows:
             self.favList.Selection = 0
             self.contextSetup()
             hotkeys = wx.AcceleratorTable([
@@ -53,6 +46,7 @@ class Favorites(wx.Frame):
         self.togleControls()
 
         self.playButton.Bind(wx.EVT_BUTTON, lambda e: self.playVideo())
+        self.openChannelButton.Bind(wx.EVT_BUTTON, self.onOpenChannel)
         self.downloadButton.Bind(wx.EVT_BUTTON, self.onDownload)
         self.deleteButton.Bind(wx.EVT_BUTTON, self.onDelete)
         self.favList.Bind(wx.EVT_LISTBOX, lambda e: self.togleControls())
@@ -63,51 +57,69 @@ class Favorites(wx.Frame):
         sizer.Fit(p)
         self.Show()
 
+    def refresh_list(self):
+        if self.rows:
+            self.favList.Set([row["display_title"] for row in self.rows])
+        else:
+            self.favList.Set(["No favorites..."])
+
     def onDelete(self, event):
         n = self.favList.Selection
-        if n == -1:
+        if n == -1 or not self.rows:
             return
         url = self.rows[n]["url"]
         self.favorites.remove_favorite(url)
-        self.favList.Delete(n)
         self.rows.pop(n)
+        self.refresh_list()
         self.togleControls()
-        try:
-            self.favList.Selection = n
-        except:
-            pass
+        if self.rows:
+            self.favList.Selection = min(n, len(self.rows) - 1)
+        else:
+            self.favList.Selection = 0
         self.favList.SetFocus()
         speak("Removed from favorites")
 
     def playVideo(self):
         n = self.favList.Selection
-        if n == -1:
+        if n == -1 or not self.rows:
             return
         item_type = self.rows[n].get("item_type", "video")
         if item_type == "playlist":
+            from gui.playlist_dialog import PlaylistDialog
             PlaylistDialog(self, self.rows[n]["url"])
             return
         if item_type == "channel":
+            from gui.channel_dialog import ChannelDialog
             ChannelDialog(self, self.rows[n]["url"])
             return
         url = self.rows[n]["url"]
         title = self.rows[n]["title"]
-        stream = LoadingDialog(self, "Loading playback", get_video_stream, url).res
-        gui = MediaGui(self, title, stream, url, True if not self.rows[n]["live"] else False, self.rows)
-        self.Hide()
+        from utiles import get_video_stream
+
+        def open_player(stream):
+            from media_player.media_gui import MediaGui
+            MediaGui(self, title, stream, url, True if not self.rows[n]["live"] else False, self.rows)
+            self.Hide()
+
+        AsyncLoadingDialog(self, "Fetching streaming URL...", get_video_stream, open_player, url)
 
     def playAudio(self):
         n = self.favList.Selection
-        if n == -1 or self.rows[n].get("item_type", "video") in ("playlist", "channel"):
+        if n == -1 or not self.rows or self.rows[n].get("item_type", "video") in ("playlist", "channel"):
             return
         url = self.rows[n]["url"]
         title = self.rows[n]["title"]
-        stream = LoadingDialog(self, "Loading playback", get_audio_stream, url).res
-        gui = MediaGui(self, title, stream, url, audio_mode=True, results=self.rows)
-        self.Hide()
+        from utiles import get_audio_stream
+
+        def open_player(stream):
+            from media_player.media_gui import MediaGui
+            MediaGui(self, title, stream, url, audio_mode=True, results=self.rows)
+            self.Hide()
+
+        AsyncLoadingDialog(self, "Fetching streaming URL...", get_audio_stream, open_player, url)
 
     def togleControls(self):
-        for control in (self.playButton, self.downloadButton, self.deleteButton):
+        for control in (self.playButton, self.openChannelButton, self.downloadButton, self.deleteButton):
             if self.rows == []:
                 control.Disable()
             else:
@@ -118,14 +130,23 @@ class Favorites(wx.Frame):
         n = self.favList.Selection
         if n == -1 or self.rows == []:
             self.playButton.Label = "Play"
+            self.openChannelButton.Label = "Open channel"
+            self.openChannelButton.Enabled = False
             return
         item_type = self.rows[n].get("item_type", "video")
         if item_type == "playlist":
             self.playButton.Label = "Open playlist"
+            self.openChannelButton.Label = "Open channel"
+            self.openChannelButton.Enabled = False
         elif item_type == "channel":
             self.playButton.Label = "Open channel"
+            self.openChannelButton.Label = "Open channel"
+            self.openChannelButton.Enabled = False
         else:
             self.playButton.Label = "Play"
+            channel_name = self.rows[n].get("channel_name") or "channel"
+            self.openChannelButton.Label = f"Open {channel_name}"
+            self.openChannelButton.Enabled = bool(self.rows[n].get("channel_url"))
 
     def contextSetup(self):
         self.contextMenu = wx.Menu()
@@ -164,23 +185,25 @@ class Favorites(wx.Frame):
 
     def onOpenInBrowser(self, event):
         n = self.favList.Selection
-        if n == -1:
+        if n == -1 or not self.rows:
             return
         webbrowser.open(self.rows[n]["url"])
 
     def onOpenChannel(self, event):
         n = self.favList.Selection
-        if n == -1:
+        if n == -1 or not self.rows:
             return
         item_type = self.rows[n].get("item_type", "video")
         if item_type == "channel":
+            from gui.channel_dialog import ChannelDialog
             ChannelDialog(self, self.rows[n]["url"])
         elif self.rows[n]["channel_url"]:
+            from gui.channel_dialog import ChannelDialog
             ChannelDialog(self, self.rows[n]["channel_url"])
 
     def onDownloadChannel(self, event):
         n = self.favList.Selection
-        if n == -1:
+        if n == -1 or not self.rows:
             return
         title = self.rows[n]["channel_name"]
         url = self.rows[n]["channel_url"]
@@ -189,66 +212,86 @@ class Favorites(wx.Frame):
             url = self.rows[n]["url"]
         if not url:
             return
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         option = int(config_get('defaultformat'))
         fmt, conv = self._format_from_option(option)
         downloadAction(url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=True)
 
     def onCopy(self, event):
-        if self.favList.Selection == -1:
+        if self.favList.Selection == -1 or not self.rows:
             return
+        import pyperclip
         pyperclip.copy(self.rows[self.favList.Selection]["url"])
         wx.MessageBox("Link copied successfully", "Done", parent=self)
 
     def _format_from_option(self, option):
+        from download_handler.formats import format_from_option
         return format_from_option(option)
 
     def directDownload(self):
         n = self.favList.Selection
-        if n == -1:
+        if n == -1 or not self.rows:
             return
         url = self.rows[n]["url"]
         title = self.rows[n]["title"]
         item_type = self.rows[n].get("item_type", "video")
         option = int(config_get('defaultformat'))
         fmt, conv = self._format_from_option(option)
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         is_channel_or_playlist = item_type in ("channel", "playlist")
         downloadAction(url, config_get('path'), dlg, fmt, convert=conv, channel_or_playlist=is_channel_or_playlist)
 
     def onM4aDownload(self, event):
         n = self.favList.Selection
-        if n == -1 or self.rows[n].get("item_type", "video") in ("playlist", "channel"):
+        if n == -1 or not self.rows or self.rows[n].get("item_type", "video") in ("playlist", "channel"):
             self.directDownload()
             return
         url = self.rows[n]["url"]
         title = self.rows[n]["title"]
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+        from download_handler.formats import AUDIO_M4A_FORMAT
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         downloadAction(url, config_get('path'), dlg, AUDIO_M4A_FORMAT, convert=False, channel_or_playlist=False)
 
     def onMp3Download(self, event):
         n = self.favList.Selection
-        if n == -1 or self.rows[n].get("item_type", "video") in ("playlist", "channel"):
+        if n == -1 or not self.rows or self.rows[n].get("item_type", "video") in ("playlist", "channel"):
             self.directDownload()
             return
         url = self.rows[n]["url"]
         title = self.rows[n]["title"]
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+        from download_handler.formats import AUDIO_DOWNLOAD_FORMAT
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         downloadAction(url, config_get('path'), dlg, AUDIO_DOWNLOAD_FORMAT, convert=True, channel_or_playlist=False)
 
     def onVideoDownload(self, event):
         n = self.favList.Selection
-        if n == -1:
+        if n == -1 or not self.rows:
             return
         url = self.rows[n]["url"]
         title = self.rows[n]["title"]
         item_type = self.rows[n].get("item_type", "video")
+        from gui.download_progress import DownloadProgress
+        from download_handler.downloader import downloadAction
+        from download_handler.formats import VIDEO_DOWNLOAD_FORMAT
+
         dlg = DownloadProgress(wx.GetApp().GetTopWindow(), title)
         downloadAction(url, config_get('path'), dlg, VIDEO_DOWNLOAD_FORMAT, convert=False, channel_or_playlist=(item_type in ("channel", "playlist")))
 
     def onDownload(self, event):
         n = self.favList.Selection
-        if n == -1:
+        if n == -1 or not self.rows:
             return
         if self.rows[n].get("item_type", "video") in ("playlist", "channel"):
             self.directDownload()

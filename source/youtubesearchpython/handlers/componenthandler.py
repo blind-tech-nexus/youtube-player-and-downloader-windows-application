@@ -217,6 +217,11 @@ class ComponentHandler:
         return result
 
     def _finalizeComponent(self, component: dict) -> dict:
+        accessibility = component.get('accessibility')
+        if isinstance(accessibility, dict) and 'duration' in component:
+            accessible_duration = accessibility.get('duration')
+            if isinstance(accessible_duration, str) and accessible_duration.strip():
+                component['duration'] = accessible_duration
         component['id'] = self._defaultText(component.get('id'), 'No id')
         component['title'] = self._defaultText(component.get('title'), 'No title')
         component['thumbnails'] = component.get('thumbnails') or []

@@ -2,17 +2,6 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote_plus
 import os
 
-import yt_dlp
-from youtubesearchpython import (
-    ChannelsSearch,
-    CustomSearch,
-    PlaylistsSearch,
-    Search as AllSearch,
-    ShortsSearch,
-    VideosSearch,
-)
-from youtubesearchpython.core.constants import *
-
 from youtube_browser.ytdlp_collections import NO_RESULTS_TEXT
 
 
@@ -48,6 +37,15 @@ def _duration_to_text(value):
             return f"{hours}:{minutes:02d}:{seconds:02d}"
         return f"{minutes}:{seconds:02d}"
     return str(value).strip()
+
+
+def _accessible_duration(result):
+    accessibility = result.get("accessibility") if isinstance(result, dict) else None
+    if isinstance(accessibility, dict):
+        duration = accessibility.get("duration")
+        if duration not in (None, "", "No duration"):
+            return duration
+    return result.get("duration")
 
 
 def _strip_suffix(value, suffix):
@@ -106,8 +104,8 @@ def _published_from_upload_date(value):
 
 class Search:
     page_size = 20
-    ytdlp_prefetch_limit = 240
-    ytdlp_enrich_workers = 100
+    ytdlp_prefetch_limit = 80
+    ytdlp_enrich_workers = 4
 
     def __init__(self, query, filter=0):
         self.query = query
@@ -134,6 +132,20 @@ class Search:
             self.parse_ytdlp_results()
 
     def create_search(self):
+        from youtubesearchpython import (
+            ChannelsSearch,
+            CustomSearch,
+            PlaylistsSearch,
+            Search as AllSearch,
+            ShortsSearch,
+            VideosSearch,
+        )
+        from youtubesearchpython.core.constants import (
+            VideoDurationFilter,
+            VideoSortOrder,
+            VideoUploadDateFilter,
+        )
+
         mode = self.filter_config["mode"]
         if mode == "all":
             return AllSearch(self.query, limit=self.page_size)
@@ -217,6 +229,8 @@ class Search:
         return url
 
     def parse_ytdlp_results(self):
+        import yt_dlp
+
         self.using_ytdlp = True
         with yt_dlp.YoutubeDL(self.ytdlp_options()) as ydl:
             info = ydl.extract_info(self.ytdlp_search_url(), download=False) or {}
@@ -243,6 +257,8 @@ class Search:
                     original[0].update(self.merge_ytdlp_entry(original[0], enriched))
 
     def fetch_ytdlp_detail(self, url):
+        import yt_dlp
+
         try:
             with yt_dlp.YoutubeDL(self.ytdlp_detail_options()) as ydl:
                 return ydl.extract_info(url, download=False) or {}
@@ -381,7 +397,7 @@ class Search:
                 "type": result_type,
                 "title": result.get("title", "Untitled"),
                 "url": result.get("link", ""),
-                "duration": _duration_to_text(result.get("duration")),
+                "duration": _duration_to_text(_accessible_duration(result)),
                 "published": result.get("publishedTime", "") or "",
                 "elements": "",
                 "channel": {

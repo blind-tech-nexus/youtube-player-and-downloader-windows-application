@@ -6,6 +6,9 @@ class DownloadProgress(wx.Frame):
         self.Title = "Downloading - {}".format(title if title != "" else "YouTube player and downloader")
         self.downloader = None
         self.is_completed = False
+        self.is_closing = False
+        self.cancel_requested = False
+        self.success_timer = None
         
         panel = wx.Panel(self)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -42,6 +45,8 @@ class DownloadProgress(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.onClose)
 
     def update_stats(self, percent, total, downloaded, remaining, speed):
+        if self.is_closing:
+            return
         if self.list_box.GetCount() == 5:
             self.list_box.SetString(0, "Download progress: {}%".format(percent))
             self.list_box.SetString(1, "Total file size: {}".format(total))
@@ -52,6 +57,8 @@ class DownloadProgress(wx.Frame):
         self.Layout()
 
     def update_status(self, msg):
+        if self.is_closing:
+            return
         self.lbl_status.SetLabel(msg)
         if msg == "Converting your audio...":
             self.list_box.Clear()
@@ -59,18 +66,65 @@ class DownloadProgress(wx.Frame):
             self.list_box.SetSelection(0)
         self.Layout()
 
+    def finish_download(self, success_message):
+        if self.is_closing:
+            return
+        self.is_completed = True
+        self.update_status("Completed Successfully!")
+        self.btnStop.Disable()
+        if not self.IsShown():
+            self.Show()
+        self.Raise()
+        self.RequestUserAttention()
+        self.success_timer = wx.CallLater(25, self.show_success_dialog, success_message)
+
+    def show_success_dialog(self, success_message):
+        if self.is_closing:
+            return
+        parent = self if self and self.IsShownOnScreen() else None
+        dialog = wx.MessageDialog(parent, success_message, "Success", style=wx.OK | wx.ICON_INFORMATION | wx.STAY_ON_TOP)
+        try:
+            dialog.ShowModal()
+        finally:
+            dialog.Destroy()
+            self.success_timer = None
+        self.close_immediately()
+
+    def finish_cancelled(self):
+        self.is_completed = True
+        self.close_immediately()
+
+    def close_immediately(self):
+        if self.is_closing:
+            return
+        self.is_closing = True
+        if self.success_timer and self.success_timer.IsRunning():
+            self.success_timer.Stop()
+        self.success_timer = None
+        if self:
+            self.Destroy()
+
     def onStopClick(self, event):
         self.Close()
 
     def onClose(self, event):
+        if self.is_closing:
+            event.Skip()
+            return
+
         if not self.is_completed and self.downloader is not None and not self.downloader.cancelled:
             message = wx.MessageBox("A download is in progress. Do you want to cancel it?", "Exit", style=wx.YES_NO | wx.ICON_QUESTION, parent=self)
             if message == wx.YES:
+                self.cancel_requested = True
                 self.downloader.cancelled = True
                 self.btnStop.Disable()
                 self.btnStop.SetLabel("Stopping...")
+                self.update_status("Stopping download...")
+                self.Hide()
+                if event.CanVeto():
+                    event.Veto()
             else:
                 if event.CanVeto():
                     event.Veto()
         else:
-            self.Destroy()
+            self.close_immediately()
